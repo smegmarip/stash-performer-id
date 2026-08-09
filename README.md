@@ -21,11 +21,14 @@ Target: **Stash v0.30.1**. Service port range **15000–15999**.
 ```bash
 uv sync                       # install deps (+ dev group)
 uv run pytest                 # run tests
-uv run python -m bridge.app   # run the service on :15000
+uv run python -m bridge.app   # run the service (PORT, default 15000)
 ```
 
-Or containerized:
+Or containerized (service + viewer):
 
 ```bash
-docker compose up --build     # service on :15000 (/healthz, /graphql)
+docker compose up --build     # service on :SERVICE_PORT (15000), viewer on :VIEWER_PORT (15001)
 ```
+
+Ports are driven by `SERVICE_PORT` / `VIEWER_PORT` (see `.env.example`); everything else
+derives from them.

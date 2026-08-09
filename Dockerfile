@@ -2,10 +2,12 @@
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+ARG PORT=15000
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
-    PATH="/opt/venv/bin:$PATH"
+    PATH="/opt/venv/bin:$PATH" \
+    PORT=${PORT}
 
 WORKDIR /app
 
@@ -19,8 +21,8 @@ COPY bridge ./bridge
 RUN useradd -m app && chown -R app /app
 USER app
 
-EXPOSE 15000
+EXPOSE ${PORT}
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:15000/healthz').status==200 else 1)"
+    CMD python -c "import os,urllib.request,sys; p=os.environ.get('PORT','15000'); sys.exit(0 if urllib.request.urlopen(f'http://localhost:{p}/healthz').status==200 else 1)"
 
 ENTRYPOINT ["python", "-m", "bridge.app"]

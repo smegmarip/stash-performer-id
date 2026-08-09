@@ -256,6 +256,62 @@ class Database:
         self.conn.commit()
         return cur.rowcount
 
+    # --- activation (name -> asset), Step 1 (DESIGN §3) ---
+
+    def list_gallery_assets(self, limit: int = 500, offset: int = 0) -> list[dict]:
+        """Galleries with their candidate names (own + folder) and the active assignment."""
+        galleries = self.conn.execute(
+            "SELECT id, stash_id, path, basename FROM asset WHERE resource_type = 'gallery'"
+            " ORDER BY path LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        out = []
+        for g in galleries:
+            cands = self.conn.execute(
+                """SELECT DISTINCT n.id AS name_id, n.name, n.valid
+                   FROM name_candidate nc
+                   JOIN names n ON n.name = nc.name
+                   WHERE nc.asset_id = ?
+                      OR nc.asset_id IN (
+                         SELECT child_asset_id FROM asset_relationship
+                         WHERE parent_asset_id = ? AND kind = 'gallery_folder')
+                   ORDER BY n.valid DESC, n.name""",
+                (g["id"], g["id"]),
+            ).fetchall()
+            active = self.conn.execute(
+                """SELECT nr.name_id, n.name FROM name_relationship nr
+                   JOIN names n ON n.id = nr.name_id
+                   WHERE nr.asset_id = ? AND nr.active = 1""",
+                (g["id"],),
+            ).fetchone()
+            out.append(
+                {
+                    "asset_id": g["id"],
+                    "stash_id": g["stash_id"],
+                    "path": g["path"],
+                    "basename": g["basename"],
+                    "candidates": [dict(c) for c in cands],
+                    "active": dict(active) if active else None,
+                }
+            )
+        return out
+
+    def activate_name(
+        self, asset_id: int, name_id: int, source_level: str, origin_asset_id: int | None = None
+    ) -> None:
+        """Set the single active name for an asset (replaces any existing active)."""
+        self.conn.execute("DELETE FROM name_relationship WHERE asset_id = ?", (asset_id,))
+        self.conn.execute(
+            "INSERT INTO name_relationship(name_id, asset_id, active, source_level,"
+            " origin_asset_id, created_at) VALUES (?, ?, 1, ?, ?, ?)",
+            (name_id, asset_id, source_level, origin_asset_id, _now()),
+        )
+        self.conn.commit()
+
+    def deactivate_asset(self, asset_id: int) -> None:
+        self.conn.execute("DELETE FROM name_relationship WHERE asset_id = ?", (asset_id,))
+        self.conn.commit()
+
     def add_direct_name(self, name: str, disambiguation: str = "") -> dict:
         """Direct-input name (marked valid)."""
         self.conn.execute(

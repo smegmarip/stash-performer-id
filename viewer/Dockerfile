@@ -4,10 +4,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-# Optional: point the browser at a specific service URL. Default (empty) makes the app
-# derive it from window.location (<host>:15000). See src/lib/api.ts.
+# The browser derives the service URL from window.location at runtime. VITE_API_PORT sets the
+# port it targets (keep in sync with the service's SERVICE_PORT); VITE_API_BASE overrides the
+# whole base if the service lives at a fixed URL. See src/lib/api.ts.
+ARG VITE_API_PORT="15000"
 ARG VITE_API_BASE=""
-ENV VITE_API_BASE=${VITE_API_BASE}
+ENV VITE_API_PORT=${VITE_API_PORT} VITE_API_BASE=${VITE_API_BASE}
 RUN npm run build
 
 FROM nginx:alpine

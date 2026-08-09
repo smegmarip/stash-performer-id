@@ -1,6 +1,6 @@
 // Name-DB API client. The viewer runs in the browser; by default it targets the service on
-// port 15000 of the same host it was served from (CORS is open on the service). Override with
-// VITE_API_BASE at build time if the service lives elsewhere.
+// VITE_API_PORT (default 15000) of the same host it was served from (CORS is open on the
+// service). Override the whole base with VITE_API_BASE at build time if it lives elsewhere.
 
 export type NameRow = {
   id: number;
@@ -18,8 +18,23 @@ export type Summary = {
   distinct_names: number;
 };
 
+export type GalleryCandidate = { name_id: number; name: string; valid: boolean };
+
+export type GalleryAsset = {
+  asset_id: number;
+  stash_id: string | null;
+  path: string | null;
+  basename: string | null;
+  candidates: GalleryCandidate[];
+  active: { name_id: number; name: string } | null;
+};
+
+// `||` (not `??`): the Docker build bakes these as "" (empty), which is not nullish — so `??`
+// would keep "" and (for the base) make fetches relative to the viewer's own origin. Empty must
+// fall through to the derived default (<served-host>:VITE_API_PORT).
+const API_PORT: string = import.meta.env.VITE_API_PORT || "15000";
 const API_BASE: string =
-  import.meta.env.VITE_API_BASE ?? `${location.protocol}//${location.hostname}:15000`;
+  import.meta.env.VITE_API_BASE || `${location.protocol}//${location.hostname}:${API_PORT}`;
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -56,4 +71,12 @@ export const api = {
     }),
   harvestGalleries: () =>
     req<{ galleries: number; new_names: number }>("/harvest/galleries", { method: "POST" }),
+  listGalleries: () => req<GalleryAsset[]>("/assets/galleries"),
+  activate: (assetId: number, nameId: number, sourceLevel = "gallery") =>
+    req<{ ok: boolean }>(`/assets/${assetId}/activate`, {
+      method: "POST",
+      body: JSON.stringify({ name_id: nameId, source_level: sourceLevel }),
+    }),
+  deactivate: (assetId: number) =>
+    req<{ ok: boolean }>(`/assets/${assetId}/activation`, { method: "DELETE" }),
 };

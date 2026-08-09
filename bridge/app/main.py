@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from strawberry.fastapi import GraphQLRouter
 from strawberry.schema.config import StrawberryConfig
 
+from bridge.app.api import assets as assets_api
 from bridge.app.api import harvest as harvest_api
 from bridge.app.api import names as names_api
 from bridge.app.config import get_settings
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(GraphQLRouter(schema), prefix="/graphql")
     app.include_router(names_api.router)
     app.include_router(harvest_api.router)
+    app.include_router(assets_api.router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
