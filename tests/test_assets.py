@@ -38,11 +38,11 @@ def _galleries(client):
 
 
 def _name_id(client, name):
-    g = _galleries(client)[0]
-    return next(c["name_id"] for c in g["candidates"] if c["name"] == name)
+    names = client.get("/names").json()["names"]
+    return next(n["id"] for n in names if n["name"] == name)
 
 
-def test_galleries_expose_folder_candidate_and_image_count(ctx):
+def test_galleries_expose_image_count(ctx):
     _db, client, gallery = ctx
     body = client.get("/assets", params={"type": "gallery"}).json()
     assert body["total"] == 1
@@ -50,7 +50,6 @@ def test_galleries_expose_folder_candidate_and_image_count(ctx):
     assert g["asset_id"] == gallery
     assert g["child_count"] == 2
     assert g["resource_type"] == "gallery"
-    assert any(c["name"] == "Jane Doe" for c in g["candidates"])
     assert g["active"] is None
 
 

@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS asset (
     stash_id          TEXT,                    -- Stash entity id (NULL for non-entity folders)
     path              TEXT,
     basename          TEXT,
+    thumb_stash_id    TEXT,                    -- Stash image id whose thumbnail represents it
     evaluated_at      TEXT NOT NULL
 );
 -- Identity key: a Stash entity (type+id) or, lacking one, its path.
@@ -96,6 +97,11 @@ class Database:
 
     def init_schema(self) -> None:
         self.conn.executescript(SCHEMA)
+        # Lightweight migration for DBs created before thumb_stash_id existed.
+        try:
+            self.conn.execute("ALTER TABLE asset ADD COLUMN thumb_stash_id TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already present
         self.conn.commit()
 
     def close(self) -> None:
@@ -111,6 +117,7 @@ class Database:
         stash_id: str | None = None,
         path: str | None = None,
         basename: str | None = None,
+        thumb_stash_id: str | None = None,
     ) -> int:
         cur = self.conn.execute(
             """SELECT id FROM asset
@@ -125,10 +132,17 @@ class Database:
             return row["id"]
         cur = self.conn.execute(
             "INSERT INTO asset(resource_type, stash_entity_type, stash_id, path, basename,"
-            " evaluated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (resource_type, stash_entity_type, stash_id, path, basename, _now()),
+            " thumb_stash_id, evaluated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (resource_type, stash_entity_type, stash_id, path, basename, thumb_stash_id, _now()),
         )
         return cur.lastrowid
+
+    def set_thumb_if_null(self, asset_id: int, thumb_stash_id: str) -> None:
+        """Backfill an asset's thumbnail image id (first image wins; cover already set wins)."""
+        self.conn.execute(
+            "UPDATE asset SET thumb_stash_id = ? WHERE id = ? AND thumb_stash_id IS NULL",
+            (thumb_stash_id, asset_id),
+        )
 
     def add_relationship(self, parent_asset_id: int, child_asset_id: int, kind: str) -> None:
         self.conn.execute(
@@ -319,37 +333,20 @@ class Database:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict]:
-        """Assets of a scope (gallery/folder/file) with candidate names, active assignment
-        (incl. the source_level that set it), and member-image count."""
+        """Assets of a scope (gallery/folder/file) with the active assignment (incl. the
+        source_level that set it) and member-image count. Names are assigned from the
+        authoritative `names` bank, so no per-asset candidates are returned."""
         where, params = self._asset_where(resource_type, q, assigned)
         sort_col = self._ASSET_SORT.get(sort, "path")
         order_sql = "DESC" if order.lower() == "desc" else "ASC"
         assets = self.conn.execute(
-            f"SELECT id, stash_id, path, basename FROM asset WHERE {where}"
+            f"SELECT id, stash_id, path, basename, thumb_stash_id FROM asset WHERE {where}"
             f" ORDER BY {sort_col} {order_sql} LIMIT ? OFFSET ?",
             [*params, limit, offset],
         ).fetchall()
         cascade_kind = self._CASCADE_KIND.get(resource_type)
         out = []
         for a in assets:
-            # candidates: the asset's own; galleries also inherit their folder's.
-            if resource_type == "gallery":
-                cands = self.conn.execute(
-                    """SELECT DISTINCT n.id AS name_id, n.name, n.valid
-                       FROM name_candidate nc JOIN names n ON n.name = nc.name
-                       WHERE nc.asset_id = ?
-                          OR nc.asset_id IN (SELECT child_asset_id FROM asset_relationship
-                                             WHERE parent_asset_id = ? AND kind = 'gallery_folder')
-                       ORDER BY n.valid DESC, n.name""",
-                    (a["id"], a["id"]),
-                ).fetchall()
-            else:
-                cands = self.conn.execute(
-                    """SELECT DISTINCT n.id AS name_id, n.name, n.valid
-                       FROM name_candidate nc JOIN names n ON n.name = nc.name
-                       WHERE nc.asset_id = ? ORDER BY n.valid DESC, n.name""",
-                    (a["id"],),
-                ).fetchall()
             active = self.conn.execute(
                 """SELECT nr.name_id, n.name, nr.source_level FROM name_relationship nr
                    JOIN names n ON n.id = nr.name_id
@@ -369,9 +366,9 @@ class Database:
                     "stash_id": a["stash_id"],
                     "path": a["path"],
                     "basename": a["basename"],
+                    "thumb_stash_id": a["thumb_stash_id"],
                     "resource_type": resource_type,
                     "child_count": child_count,
-                    "candidates": [dict(c) for c in cands],
                     "active": dict(active) if active else None,
                 }
             )

@@ -16,6 +16,7 @@ query Galleries($page: Int!, $per_page: Int!) {
     galleries {
       id
       title
+      cover { id }
       folder { id path }
       files { id path basename }
     }
@@ -89,12 +90,14 @@ def _harvest_one(db: Database, stash: StashClient, g: dict) -> int:
     # Display name: the folder/zip basename, else the gallery title (user-created galleries).
     g_basename = _basename_no_ext(g_path) or g.get("title")
 
+    cover = g.get("cover") or {}
     gallery_asset_id = db.upsert_asset(
         "gallery",
         stash_entity_type="gallery",
         stash_id=str(g["id"]),
         path=g_path,
         basename=g_basename,
+        thumb_stash_id=str(cover["id"]) if cover.get("id") else None,
     )
 
     gallery_name_src = g.get("title") or _basename_no_ext(g_path)
@@ -125,14 +128,18 @@ def _harvest_gallery_images(
         for img in images:
             vfs = img.get("visual_files") or []
             path = vfs[0].get("path") if vfs else None
+            img_id = str(img["id"])
             image_asset_id = db.upsert_asset(
                 "file",
                 stash_entity_type="image",
-                stash_id=str(img["id"]),
+                stash_id=img_id,
                 path=path,
                 basename=_basename_no_ext(path),
+                thumb_stash_id=img_id,  # a file's thumbnail is its own image
             )
             db.add_relationship(gallery_asset_id, image_asset_id, "gallery_image")
+            # Backfill gallery thumbnail from the first member image (if it has no cover).
+            db.set_thumb_if_null(gallery_asset_id, img_id)
 
             if path:
                 parent = os.path.dirname(path)
@@ -147,6 +154,7 @@ def _harvest_gallery_images(
                     # link gallery -> folder (candidate inheritance)
                     db.add_relationship(gallery_asset_id, folder_asset_id, "gallery_folder")
                 db.add_relationship(folder_asset_id, image_asset_id, "folder_image")
+                db.set_thumb_if_null(folder_asset_id, img_id)  # folder thumb = first image
             count += 1
         if len(images) < per_page:
             break

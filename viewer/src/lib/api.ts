@@ -18,16 +18,14 @@ export type Summary = {
   distinct_names: number;
 };
 
-export type Candidate = { name_id: number; name: string; valid: boolean };
-
 export type AssetRow = {
   asset_id: number;
   stash_id: string | null;
   path: string | null;
   basename: string | null;
+  thumb_stash_id: string | null;
   resource_type: string;
   child_count: number;
-  candidates: Candidate[];
   active: { name_id: number; name: string; source_level: string } | null;
 };
 

@@ -13,6 +13,7 @@ from strawberry.schema.config import StrawberryConfig
 from bridge.app.api import assets as assets_api
 from bridge.app.api import harvest as harvest_api
 from bridge.app.api import names as names_api
+from bridge.app.api import thumbnails as thumbnails_api
 from bridge.app.config import get_settings
 
 SERVICE_NAME = "stash-performer-id"
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(names_api.router)
     app.include_router(harvest_api.router)
     app.include_router(assets_api.router)
+    app.include_router(thumbnails_api.router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

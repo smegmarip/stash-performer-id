@@ -3,15 +3,17 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./lib/api";
 import type { AssetRow, NameRow, Scope } from "./lib/api";
 import { useDebounced } from "./lib/useDebounced";
+import { useUrlNumber, useUrlState } from "./lib/useUrlState";
+import { AssignCombobox } from "./ui/AssignCombobox";
 import { Pager } from "./ui/Pager";
 
-const SCOPES: { key: Scope; label: string }[] = [
-  { key: "gallery", label: "Gallery" },
-  { key: "folder", label: "Folder" },
-  { key: "file", label: "File" },
+const SCOPES: { key: Scope; label: string; icon: string }[] = [
+  { key: "gallery", label: "Gallery", icon: "icon-[tabler--photo]" },
+  { key: "folder", label: "Folder", icon: "icon-[tabler--folder]" },
+  { key: "file", label: "File", icon: "icon-[tabler--file]" },
 ];
 const ASSIGNED = [
-  { key: "", label: "All" },
+  { key: "all", label: "All" },
   { key: "assigned", label: "Assigned" },
   { key: "unassigned", label: "Unassigned" },
 ] as const;
@@ -22,14 +24,15 @@ const SORTS = [
 const PAGE = 100;
 
 export default function AssetsView() {
-  const [scope, setScope] = useState<Scope>("gallery");
+  const [scopeStr, setScope] = useUrlState("scope", "gallery");
+  const scope = scopeStr as Scope;
   const [assets, setAssets] = useState<AssetRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("path");
-  const [order, setOrder] = useState("asc");
-  const [assigned, setAssigned] = useState("");
+  const [offset, setOffset] = useUrlNumber("offset", 0);
+  const [search, setSearch] = useUrlState("q", "");
+  const [sort, setSort] = useUrlState("sort", "path");
+  const [order, setOrder] = useUrlState("order", "asc");
+  const [assigned, setAssigned] = useUrlState("assigned", "all");
   const [validNames, setValidNames] = useState<NameRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +42,15 @@ export default function AssetsView() {
     setError(null);
     try {
       const [page, names] = await Promise.all([
-        api.listAssets({ type: scope, q, sort, order, assigned: assigned || undefined, limit: PAGE, offset }),
+        api.listAssets({
+          type: scope,
+          q,
+          sort,
+          order,
+          assigned: assigned === "all" ? undefined : assigned,
+          limit: PAGE,
+          offset,
+        }),
         api.listNames({ status: "valid", limit: 1000 }),
       ]);
       setAssets(page.assets);
@@ -74,136 +85,175 @@ export default function AssetsView() {
   const assignedCount = assets.filter((a) => a.active).length;
 
   return (
-    <>
-      {error && <div className="error">{error}</div>}
-
-      <div className="statusbar">
-        <Stat label={scope} value={total} />
-        <Stat label="assigned (page)" value={assignedCount} />
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-medium">Assets</h1>
+        <button
+          type="button"
+          className="btn btn-soft btn-sm"
+          disabled={busy}
+          onClick={() => void refresh()}
+        >
+          <span className="icon-[tabler--refresh] size-4" />
+          Refresh
+        </button>
       </div>
 
-      <div className="toolbar">
-        <div className="filters">
-          <div className="seg">
+      <div className="stats bg-base-100 shadow-base-300/10 w-full shadow-md">
+        <Stat label={`${scope} total`} value={total} icon="icon-[tabler--stack-2]" />
+        <Stat label="assigned (page)" value={assignedCount} icon="icon-[tabler--user-check]" />
+      </div>
+
+      {error && (
+        <div className="alert alert-error alert-soft" role="alert">
+          {error}
+        </div>
+      )}
+
+      <div className="card shadow-base-300/10 shadow-md">
+        <div className="card-header flex flex-wrap items-center gap-3">
+          <div className="join">
             {SCOPES.map((s) => (
               <button
                 key={s.key}
-                className={scope === s.key ? "active" : ""}
+                type="button"
+                className={`join-item btn btn-sm ${scope === s.key ? "btn-primary" : "btn-soft"}`}
                 onClick={() => reset(() => setScope(s.key))}
               >
+                <span className={`${s.icon} size-4`} />
                 {s.label}
               </button>
             ))}
           </div>
-          <input
-            className="search"
-            placeholder={`Search ${scope}s…`}
-            value={search}
-            onChange={(e) => reset(() => setSearch(e.target.value))}
-          />
-          <div className="seg">
+          <label className="input input-sm max-w-52">
+            <span className="icon-[tabler--search] text-base-content/60 my-auto size-4 shrink-0" />
+            <input
+              type="search"
+              className="grow"
+              placeholder={`Search ${scope}s…`}
+              value={search}
+              onChange={(e) => reset(() => setSearch(e.target.value))}
+            />
+          </label>
+          <div className="join">
             {ASSIGNED.map((a) => (
               <button
                 key={a.key}
-                className={assigned === a.key ? "active" : ""}
+                type="button"
+                className={`join-item btn btn-sm ${assigned === a.key ? "btn-primary" : "btn-soft"}`}
                 onClick={() => reset(() => setAssigned(a.key))}
               >
                 {a.label}
               </button>
             ))}
           </div>
-          <select className="sortsel" value={sort} onChange={(e) => setSort(e.target.value)}>
+          <select
+            className="select select-sm ms-auto max-w-36"
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+          >
             {SORTS.map((s) => (
               <option key={s.key} value={s.key}>
-                sort: {s.label}
+                Sort: {s.label}
               </option>
             ))}
           </select>
-          <button title="toggle order" onClick={() => setOrder(order === "asc" ? "desc" : "asc")}>
-            {order === "asc" ? "↑" : "↓"}
+          <button
+            type="button"
+            className="btn btn-soft btn-square btn-sm"
+            title="Toggle order"
+            onClick={() => setOrder(order === "asc" ? "desc" : "asc")}
+          >
+            <span className={`size-4 ${order === "asc" ? "icon-[tabler--sort-ascending]" : "icon-[tabler--sort-descending]"}`} />
           </button>
         </div>
-        <div className="actions">
-          <button disabled={busy} onClick={() => void refresh()}>
-            Refresh
-          </button>
-        </div>
-      </div>
 
-      <div className="assets">
-        {assets.map((a) => (
-          <div key={a.asset_id} className="asset">
-            <div className="asset-head">
-              <b>{a.basename ?? a.path ?? `#${a.asset_id}`}</b>
-              {a.child_count > 0 && <span className="count">{a.child_count} images</span>}
-              {a.active ? (
-                <span className="active-name">
-                  {a.active.name}
-                  <span className="cascade">
-                    {" "}
-                    (from {a.active.source_level}
-                    {a.child_count > 0 ? ` → ${a.child_count}` : ""})
-                  </span>
-                  <button
-                    className="clear"
-                    disabled={busy}
-                    title="clear assignment (and its images)"
-                    onClick={() => void withBusy(() => api.deactivate(a.asset_id))}
-                  >
-                    ×
-                  </button>
-                </span>
-              ) : (
-                <span className="muted">unassigned</span>
-              )}
-            </div>
-            <div className="chips">
-              {a.candidates.map((c) => {
-                const active = a.active?.name_id === c.name_id;
-                const cls = `chip${active ? " active" : ""}${c.valid ? "" : " invalid"}`;
-                return (
-                  <button
-                    key={c.name_id}
-                    className={cls}
-                    disabled={busy}
-                    onClick={() => void withBusy(() => api.activate(a.asset_id, c.name_id, scope))}
-                  >
-                    {c.name}
-                  </button>
-                );
-              })}
-              <select
-                className="assign"
-                disabled={busy}
-                value=""
-                onChange={(e) => {
-                  const id = Number(e.target.value);
-                  if (id) void withBusy(() => api.activate(a.asset_id, id, scope));
-                }}
-              >
-                <option value="">assign name…</option>
-                {validNames.map((n) => (
-                  <option key={n.id} value={n.id}>
-                    {n.name}
-                  </option>
+        <div className="card-body p-0">
+          <div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th className="w-0"></th>
+                  <th>Name</th>
+                  <th className="text-center">Images</th>
+                  <th>Assignment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {assets.map((a) => (
+                  <tr key={a.asset_id}>
+                    <td>
+                      {a.thumb_stash_id ? (
+                        <div className="avatar">
+                          <div className="rounded-field size-10 overflow-hidden">
+                            <img
+                              src={`${api.base}/thumbnail/${a.thumb_stash_id}`}
+                              alt=""
+                              loading="lazy"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="avatar avatar-placeholder">
+                          <div className="bg-base-200 text-base-content/40 rounded-field size-10">
+                            <span className="icon-[tabler--photo] size-5" />
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <div className="flex flex-col">
+                        <span className="font-medium">{a.basename ?? `#${a.asset_id}`}</span>
+                        {a.path && (
+                          <span className="text-base-content/40 max-w-md truncate text-xs">
+                            {a.path}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="text-center">
+                      {a.child_count > 0 ? (
+                        a.child_count
+                      ) : (
+                        <span className="text-base-content/40">—</span>
+                      )}
+                    </td>
+                    <td>
+                      <AssignCombobox
+                        active={a.active}
+                        options={validNames}
+                        disabled={busy}
+                        onAssign={(id) => void withBusy(() => api.activate(a.asset_id, id, scope))}
+                        onClear={() => void withBusy(() => api.deactivate(a.asset_id))}
+                      />
+                    </td>
+                  </tr>
                 ))}
-              </select>
-            </div>
+                {assets.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="text-base-content/50 py-8 text-center">
+                      No {scope} assets.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        ))}
-        {assets.length === 0 && <div className="empty">No {scope} assets.</div>}
+          <Pager total={total} offset={offset} page={PAGE} busy={busy} onOffset={setOffset} />
+        </div>
       </div>
-
-      <Pager total={total} offset={offset} page={PAGE} busy={busy} onOffset={setOffset} />
-    </>
+    </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value, icon }: { label: string; value: number; icon: string }) {
   return (
     <div className="stat">
-      <b>{value}</b>
-      <span>{label}</span>
+      <div className="stat-figure text-primary">
+        <span className={`${icon} size-6`} />
+      </div>
+      <div className="stat-title capitalize">{label}</div>
+      <div className="stat-value text-2xl">{value}</div>
     </div>
   );
 }

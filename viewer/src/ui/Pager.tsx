@@ -13,15 +13,27 @@ export function Pager({
 }) {
   if (total <= page) return null;
   return (
-    <div className="pager">
-      <button disabled={busy || offset === 0} onClick={() => onOffset(Math.max(0, offset - page))}>
+    <div className="text-base-content/60 flex items-center justify-center gap-3 py-3 text-sm">
+      <button
+        type="button"
+        className="btn btn-soft btn-sm"
+        disabled={busy || offset === 0}
+        onClick={() => onOffset(Math.max(0, offset - page))}
+      >
+        <span className="icon-[tabler--chevron-left] size-4" />
         Prev
       </button>
       <span>
         {offset + 1}–{Math.min(offset + page, total)} of {total}
       </span>
-      <button disabled={busy || offset + page >= total} onClick={() => onOffset(offset + page)}>
+      <button
+        type="button"
+        className="btn btn-soft btn-sm"
+        disabled={busy || offset + page >= total}
+        onClick={() => onOffset(offset + page)}
+      >
         Next
+        <span className="icon-[tabler--chevron-right] size-4" />
       </button>
     </div>
   );
