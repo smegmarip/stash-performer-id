@@ -1,0 +1,28 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# uv
+# (uv.lock IS committed once generated)
+
+# Data / cache
+/cache/
+/data/
+*.sqlite
+*.sqlite-*
+
+# Editor
+.vscode/
+.history/
+.DS_Store
+
+# Node (viewer)
+node_modules/
+dist/

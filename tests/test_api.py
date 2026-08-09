@@ -1,0 +1,46 @@
+import pytest
+from fastapi.testclient import TestClient
+
+from bridge.app.api.deps import get_db
+from bridge.app.cache.db import Database
+from bridge.app.main import app
+
+
+@pytest.fixture
+def client(tmp_path):
+    db = Database(str(tmp_path / "api.sqlite"))
+    app.dependency_overrides[get_db] = lambda: db
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+    db.close()
+
+
+def test_summary_empty(client):
+    r = client.get("/audit/summary")
+    assert r.status_code == 200
+    assert r.json()["distinct_names"] == 0
+
+
+def test_direct_name_list_and_triage(client):
+    r = client.post("/names", json={"name": "Test Person"})
+    assert r.status_code == 200
+    nid = r.json()["id"]
+    assert r.json()["valid"] == 1  # direct input is valid
+
+    r = client.get("/names")
+    assert any(n["name"] == "Test Person" for n in r.json())
+
+    r = client.patch(f"/names/{nid}", json={"valid": False})
+    assert r.status_code == 200
+    assert r.json()["valid"] == 0
+
+    r = client.get("/names", params={"status": "invalid"})
+    assert [n["id"] for n in r.json()] == [nid]
+
+    r = client.get("/names", params={"status": "valid"})
+    assert nid not in [n["id"] for n in r.json()]
+
+
+def test_patch_missing_name_404(client):
+    r = client.patch("/names/424242", json={"valid": True})
+    assert r.status_code == 404

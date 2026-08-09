@@ -1,0 +1,17 @@
+.git
+.history
+.venv
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+.env
+cache/
+data/
+viewer/node_modules
+viewer/dist
+docs
+tests
+plugin
+.vscode
+.DS_Store

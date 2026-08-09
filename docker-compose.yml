@@ -1,0 +1,27 @@
+services:
+  stash-performer-id:
+    build: .
+    container_name: stash-performer-id
+    restart: unless-stopped
+    ports:
+      - "15000:15000"
+    environment:
+      - PORT=15000
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:15000}
+      - STASH_URL=${STASH_URL:-http://localhost:9999}
+      - STASH_API_KEY=${STASH_API_KEY:-}
+      - PARSE_BOT_API_KEY=${PARSE_BOT_API_KEY:-}
+      - TOP_FOLDER=${TOP_FOLDER:-}
+      - MEDIA_ROOT=/data
+      - DB_PATH=/cache/stash-performer-id.sqlite
+    volumes:
+      - ./cache:/cache
+      # Read-only media mount for path harvest (Phase 1). Point at the Stash media root.
+      - ${MEDIA_ROOT_HOST:-./data}:/data:ro
+    # Phase 1+: attach to Stash's docker network so the harvest can reach it by name.
+    # networks:
+    #   - stash-net
+
+# networks:
+#   stash-net:
+#     external: true

@@ -1,0 +1,13 @@
+name: Stash Performer ID
+description: Step 2 tagger page — associate discovered names with Stash performers.
+version: 0.0.1
+url: https://github.com/ArsTropica/stash-performer-id
+# UI-only plugin: no exec, no tasks. Harvest/enrichment live in the metadata-provider
+# service (see docs/DESIGN.md §9, §10).
+ui:
+  requires:
+    - CommunityScriptsUILibrary
+  javascript:
+    - js/stash-performer-id.js
+  css:
+    - css/stash-performer-id.css
