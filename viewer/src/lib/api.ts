@@ -18,15 +18,39 @@ export type Summary = {
   distinct_names: number;
 };
 
-export type GalleryCandidate = { name_id: number; name: string; valid: boolean };
+export type Candidate = { name_id: number; name: string; valid: boolean };
 
-export type GalleryAsset = {
+export type AssetRow = {
   asset_id: number;
   stash_id: string | null;
   path: string | null;
   basename: string | null;
-  candidates: GalleryCandidate[];
-  active: { name_id: number; name: string } | null;
+  resource_type: string;
+  child_count: number;
+  candidates: Candidate[];
+  active: { name_id: number; name: string; source_level: string } | null;
+};
+
+export type AssetPage = { total: number; assets: AssetRow[] };
+export type NamePage = { total: number; names: NameRow[] };
+export type Scope = "gallery" | "folder" | "file";
+
+type NameQuery = {
+  status?: string;
+  q?: string;
+  sort?: string;
+  order?: string;
+  limit?: number;
+  offset?: number;
+};
+type AssetQuery = {
+  type: Scope;
+  q?: string;
+  sort?: string;
+  order?: string;
+  assigned?: string;
+  limit?: number;
+  offset?: number;
 };
 
 // `||` (not `??`): the Docker build bakes these as "" (empty), which is not nullish — so `??`
@@ -52,10 +76,16 @@ type NamePatch = Partial<Pick<NameRow, "valid" | "name" | "disambiguation">>;
 export const api = {
   base: API_BASE,
   summary: () => req<Summary>("/audit/summary"),
-  listNames: (status?: string, limit = 500, offset = 0) => {
-    const q = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-    if (status) q.set("status", status);
-    return req<NameRow[]>(`/names?${q.toString()}`);
+  listNames: (o: NameQuery = {}) => {
+    const p = new URLSearchParams({
+      sort: o.sort ?? "name",
+      order: o.order ?? "asc",
+      limit: String(o.limit ?? 100),
+      offset: String(o.offset ?? 0),
+    });
+    if (o.status) p.set("status", o.status);
+    if (o.q) p.set("q", o.q);
+    return req<NamePage>(`/names?${p.toString()}`);
   },
   updateName: (id: number, patch: NamePatch) =>
     req<NameRow>(`/names/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
@@ -71,12 +101,23 @@ export const api = {
     }),
   harvestGalleries: () =>
     req<{ galleries: number; new_names: number }>("/harvest/galleries", { method: "POST" }),
-  listGalleries: () => req<GalleryAsset[]>("/assets/galleries"),
-  activate: (assetId: number, nameId: number, sourceLevel = "gallery") =>
-    req<{ ok: boolean }>(`/assets/${assetId}/activate`, {
+  listAssets: (o: AssetQuery) => {
+    const p = new URLSearchParams({
+      type: o.type,
+      sort: o.sort ?? "path",
+      order: o.order ?? "asc",
+      limit: String(o.limit ?? 100),
+      offset: String(o.offset ?? 0),
+    });
+    if (o.q) p.set("q", o.q);
+    if (o.assigned) p.set("assigned", o.assigned);
+    return req<AssetPage>(`/assets?${p.toString()}`);
+  },
+  activate: (assetId: number, nameId: number, sourceLevel: Scope) =>
+    req<{ ok: boolean; affected: number }>(`/assets/${assetId}/activate`, {
       method: "POST",
       body: JSON.stringify({ name_id: nameId, source_level: sourceLevel }),
     }),
   deactivate: (assetId: number) =>
-    req<{ ok: boolean }>(`/assets/${assetId}/activation`, { method: "DELETE" }),
+    req<{ ok: boolean; affected: number }>(`/assets/${assetId}/activation`, { method: "DELETE" }),
 };

@@ -191,18 +191,41 @@ class Database:
     # --- name-DB API (viewer + tagger) ---
 
     _NAME_COLS = "id, name, disambiguation, valid, edited_at"
-    _STATUS_WHERE = {
-        "valid": "WHERE valid = 1",
-        "invalid": "WHERE valid = 0",
-    }
+    _NAME_SORT = {"name": "name", "edited": "edited_at", "id": "id"}
+
+    @staticmethod
+    def _name_where(status: str | None, q: str | None) -> tuple[str, list]:
+        where: list[str] = []
+        params: list = []
+        if status == "valid":
+            where.append("valid = 1")
+        elif status == "invalid":
+            where.append("valid = 0")
+        if q:
+            where.append("name LIKE ?")
+            params.append(f"%{q}%")
+        return ("WHERE " + " AND ".join(where)) if where else "", params
+
+    def count_names(self, status: str | None = None, q: str | None = None) -> int:
+        where, params = self._name_where(status, q)
+        return self.conn.execute(f"SELECT COUNT(*) n FROM names {where}", params).fetchone()["n"]
 
     def list_names(
-        self, status: str | None = None, limit: int = 100, offset: int = 0
+        self,
+        status: str | None = None,
+        q: str | None = None,
+        sort: str = "name",
+        order: str = "asc",
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[dict]:
-        where = self._STATUS_WHERE.get(status, "")
+        where, params = self._name_where(status, q)
+        sort_col = self._NAME_SORT.get(sort, "name")
+        order_sql = "DESC" if order.lower() == "desc" else "ASC"
         rows = self.conn.execute(
-            f"SELECT {self._NAME_COLS} FROM names {where} ORDER BY name LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"SELECT {self._NAME_COLS} FROM names {where}"
+            f" ORDER BY {sort_col} {order_sql} LIMIT ? OFFSET ?",
+            [*params, limit, offset],
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -258,59 +281,145 @@ class Database:
 
     # --- activation (name -> asset), Step 1 (DESIGN §3) ---
 
-    def list_gallery_assets(self, limit: int = 500, offset: int = 0) -> list[dict]:
-        """Galleries with their candidate names (own + folder) and the active assignment."""
-        galleries = self.conn.execute(
-            "SELECT id, stash_id, path, basename FROM asset WHERE resource_type = 'gallery'"
-            " ORDER BY path LIMIT ? OFFSET ?",
-            (limit, offset),
+    # A scope's cascade reaches its member images via this relationship kind.
+    _CASCADE_KIND = {"gallery": "gallery_image", "folder": "folder_image"}
+
+    _ASSET_SORT = {"path": "path", "name": "basename", "id": "id"}
+
+    @staticmethod
+    def _asset_where(resource_type: str, q: str | None, assigned: str | None) -> tuple[str, list]:
+        where = ["resource_type = ?"]
+        params: list = [resource_type]
+        if q:
+            where.append("(basename LIKE ? OR path LIKE ?)")
+            params += [f"%{q}%", f"%{q}%"]
+        if assigned in ("assigned", "unassigned"):
+            neg = "NOT " if assigned == "unassigned" else ""
+            where.append(
+                f"{neg}EXISTS (SELECT 1 FROM name_relationship nr"
+                " WHERE nr.asset_id = asset.id AND nr.active = 1)"
+            )
+        return " AND ".join(where), params
+
+    def count_assets(
+        self, resource_type: str, q: str | None = None, assigned: str | None = None
+    ) -> int:
+        where, params = self._asset_where(resource_type, q, assigned)
+        return self.conn.execute(
+            f"SELECT COUNT(*) n FROM asset WHERE {where}", params
+        ).fetchone()["n"]
+
+    def list_assets(
+        self,
+        resource_type: str,
+        q: str | None = None,
+        sort: str = "path",
+        order: str = "asc",
+        assigned: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Assets of a scope (gallery/folder/file) with candidate names, active assignment
+        (incl. the source_level that set it), and member-image count."""
+        where, params = self._asset_where(resource_type, q, assigned)
+        sort_col = self._ASSET_SORT.get(sort, "path")
+        order_sql = "DESC" if order.lower() == "desc" else "ASC"
+        assets = self.conn.execute(
+            f"SELECT id, stash_id, path, basename FROM asset WHERE {where}"
+            f" ORDER BY {sort_col} {order_sql} LIMIT ? OFFSET ?",
+            [*params, limit, offset],
         ).fetchall()
+        cascade_kind = self._CASCADE_KIND.get(resource_type)
         out = []
-        for g in galleries:
-            cands = self.conn.execute(
-                """SELECT DISTINCT n.id AS name_id, n.name, n.valid
-                   FROM name_candidate nc
-                   JOIN names n ON n.name = nc.name
-                   WHERE nc.asset_id = ?
-                      OR nc.asset_id IN (
-                         SELECT child_asset_id FROM asset_relationship
-                         WHERE parent_asset_id = ? AND kind = 'gallery_folder')
-                   ORDER BY n.valid DESC, n.name""",
-                (g["id"], g["id"]),
-            ).fetchall()
+        for a in assets:
+            # candidates: the asset's own; galleries also inherit their folder's.
+            if resource_type == "gallery":
+                cands = self.conn.execute(
+                    """SELECT DISTINCT n.id AS name_id, n.name, n.valid
+                       FROM name_candidate nc JOIN names n ON n.name = nc.name
+                       WHERE nc.asset_id = ?
+                          OR nc.asset_id IN (SELECT child_asset_id FROM asset_relationship
+                                             WHERE parent_asset_id = ? AND kind = 'gallery_folder')
+                       ORDER BY n.valid DESC, n.name""",
+                    (a["id"], a["id"]),
+                ).fetchall()
+            else:
+                cands = self.conn.execute(
+                    """SELECT DISTINCT n.id AS name_id, n.name, n.valid
+                       FROM name_candidate nc JOIN names n ON n.name = nc.name
+                       WHERE nc.asset_id = ? ORDER BY n.valid DESC, n.name""",
+                    (a["id"],),
+                ).fetchall()
             active = self.conn.execute(
-                """SELECT nr.name_id, n.name FROM name_relationship nr
+                """SELECT nr.name_id, n.name, nr.source_level FROM name_relationship nr
                    JOIN names n ON n.id = nr.name_id
                    WHERE nr.asset_id = ? AND nr.active = 1""",
-                (g["id"],),
+                (a["id"],),
             ).fetchone()
+            child_count = 0
+            if cascade_kind:
+                child_count = self.conn.execute(
+                    "SELECT COUNT(*) n FROM asset_relationship"
+                    " WHERE parent_asset_id = ? AND kind = ?",
+                    (a["id"], cascade_kind),
+                ).fetchone()["n"]
             out.append(
                 {
-                    "asset_id": g["id"],
-                    "stash_id": g["stash_id"],
-                    "path": g["path"],
-                    "basename": g["basename"],
+                    "asset_id": a["id"],
+                    "stash_id": a["stash_id"],
+                    "path": a["path"],
+                    "basename": a["basename"],
+                    "resource_type": resource_type,
+                    "child_count": child_count,
                     "candidates": [dict(c) for c in cands],
                     "active": dict(active) if active else None,
                 }
             )
         return out
 
+    def _cascade_targets(self, asset_id: int) -> list[int]:
+        """The asset itself plus, for a gallery/folder, its member images (cascade set).
+
+        A file cascades to only itself.
+        """
+        targets = [asset_id]
+        row = self.conn.execute(
+            "SELECT resource_type FROM asset WHERE id = ?", (asset_id,)
+        ).fetchone()
+        kind = self._CASCADE_KIND.get(row["resource_type"]) if row else None
+        if kind:
+            targets += [
+                r["child_asset_id"]
+                for r in self.conn.execute(
+                    "SELECT child_asset_id FROM asset_relationship"
+                    " WHERE parent_asset_id = ? AND kind = ?",
+                    (asset_id, kind),
+                )
+            ]
+        return targets
+
     def activate_name(
         self, asset_id: int, name_id: int, source_level: str, origin_asset_id: int | None = None
-    ) -> None:
-        """Set the single active name for an asset (replaces any existing active)."""
-        self.conn.execute("DELETE FROM name_relationship WHERE asset_id = ?", (asset_id,))
-        self.conn.execute(
-            "INSERT INTO name_relationship(name_id, asset_id, active, source_level,"
-            " origin_asset_id, created_at) VALUES (?, ?, 1, ?, ?, ?)",
-            (name_id, asset_id, source_level, origin_asset_id, _now()),
-        )
+    ) -> int:
+        """Set the active name for an asset, cascading onto its members. Returns rows affected."""
+        origin = origin_asset_id if origin_asset_id is not None else asset_id
+        targets = self._cascade_targets(asset_id)
+        for t in targets:
+            self.conn.execute("DELETE FROM name_relationship WHERE asset_id = ?", (t,))
+            self.conn.execute(
+                "INSERT INTO name_relationship(name_id, asset_id, active, source_level,"
+                " origin_asset_id, created_at) VALUES (?, ?, 1, ?, ?, ?)",
+                (name_id, t, source_level, origin, _now()),
+            )
         self.conn.commit()
+        return len(targets)
 
-    def deactivate_asset(self, asset_id: int) -> None:
-        self.conn.execute("DELETE FROM name_relationship WHERE asset_id = ?", (asset_id,))
+    def deactivate_asset(self, asset_id: int) -> int:
+        targets = self._cascade_targets(asset_id)
+        for t in targets:
+            self.conn.execute("DELETE FROM name_relationship WHERE asset_id = ?", (t,))
         self.conn.commit()
+        return len(targets)
 
     def add_direct_name(self, name: str, disambiguation: str = "") -> dict:
         """Direct-input name (marked valid)."""

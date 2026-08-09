@@ -1,6 +1,6 @@
-"""Asset activation API (Step 1: name -> asset). Gallery-level for now."""
+"""Asset activation API (Step 1: name -> asset), across gallery/folder/file scopes."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from bridge.app.api.deps import get_db
@@ -8,10 +8,28 @@ from bridge.app.cache.db import Database
 
 router = APIRouter(prefix="/assets")
 
+_SCOPES = {"gallery", "folder", "file"}
 
-@router.get("/galleries")
-def list_galleries(db: Database = Depends(get_db)) -> list[dict]:
-    return db.list_gallery_assets()
+
+@router.get("")
+def list_assets(
+    type: str = Query("gallery"),
+    q: str | None = None,
+    sort: str = "path",
+    order: str = "asc",
+    assigned: str | None = None,  # "assigned" | "unassigned" | None (all)
+    limit: int = 100,
+    offset: int = 0,
+    db: Database = Depends(get_db),
+) -> dict:
+    if type not in _SCOPES:
+        raise HTTPException(status_code=400, detail=f"type must be one of {sorted(_SCOPES)}")
+    return {
+        "total": db.count_assets(type, q=q, assigned=assigned),
+        "assets": db.list_assets(
+            type, q=q, sort=sort, order=order, assigned=assigned, limit=limit, offset=offset
+        ),
+    }
 
 
 class Activate(BaseModel):
@@ -21,11 +39,12 @@ class Activate(BaseModel):
 
 @router.post("/{asset_id}/activate")
 def activate(asset_id: int, body: Activate, db: Database = Depends(get_db)) -> dict:
-    db.activate_name(asset_id, body.name_id, body.source_level, origin_asset_id=asset_id)
-    return {"ok": True}
+    affected = db.activate_name(
+        asset_id, body.name_id, body.source_level, origin_asset_id=asset_id
+    )
+    return {"ok": True, "affected": affected}
 
 
 @router.delete("/{asset_id}/activation")
 def deactivate(asset_id: int, db: Database = Depends(get_db)) -> dict:
-    db.deactivate_asset(asset_id)
-    return {"ok": True}
+    return {"ok": True, "affected": db.deactivate_asset(asset_id)}

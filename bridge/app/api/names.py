@@ -17,12 +17,20 @@ def audit_summary(db: Database = Depends(get_db)) -> dict:
 @router.get("/names")
 def list_names(
     status: str | None = None,
-    limit: int = 500,
+    q: str | None = None,
+    sort: str = "name",
+    order: str = "asc",
+    limit: int = 100,
     offset: int = 0,
     db: Database = Depends(get_db),
-) -> list[dict]:
+) -> dict:
     """status ∈ {valid, invalid}; omit for all. Names are valid by default."""
-    return db.list_names(status=status, limit=limit, offset=offset)
+    return {
+        "total": db.count_names(status=status, q=q),
+        "names": db.list_names(
+            status=status, q=q, sort=sort, order=order, limit=limit, offset=offset
+        ),
+    }
 
 
 class NameUpdate(BaseModel):
