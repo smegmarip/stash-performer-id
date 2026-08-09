@@ -22,6 +22,20 @@ services:
     # networks:
     #   - stash-net
 
+  viewer:
+    build:
+      context: ./viewer
+      # Point the browser at the service. Default derives <host>:15000 at runtime;
+      # set this if the service is reachable at a fixed URL.
+      # args:
+      #   VITE_API_BASE: "http://192.168.50.93:15000"
+    container_name: stash-performer-id-viewer
+    restart: unless-stopped
+    ports:
+      - "15001:80"
+    depends_on:
+      - stash-performer-id
+
 # networks:
 #   stash-net:
 #     external: true

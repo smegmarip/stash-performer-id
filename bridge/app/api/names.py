@@ -17,11 +17,11 @@ def audit_summary(db: Database = Depends(get_db)) -> dict:
 @router.get("/names")
 def list_names(
     status: str | None = None,
-    limit: int = 100,
+    limit: int = 500,
     offset: int = 0,
     db: Database = Depends(get_db),
 ) -> list[dict]:
-    """status ∈ {valid, invalid, untriaged}; omit for all."""
+    """status ∈ {valid, invalid}; omit for all. Names are valid by default."""
     return db.list_names(status=status, limit=limit, offset=offset)
 
 
@@ -35,11 +35,23 @@ class NameUpdate(BaseModel):
 def update_name(
     name_id: int, body: NameUpdate, db: Database = Depends(get_db)
 ) -> dict:
-    fields = body.model_dump(exclude_unset=True)
+    # exclude_unset: only touch fields the client sent; drop explicit nulls.
+    fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     row = db.update_name(name_id, **fields)
     if row is None:
         raise HTTPException(status_code=404, detail="name not found")
     return row
+
+
+class BulkValid(BaseModel):
+    ids: list[int]
+    valid: bool
+
+
+@router.post("/names/set-valid")
+def set_valid_bulk(body: BulkValid, db: Database = Depends(get_db)) -> dict:
+    """Batch valid/invalid — invalidate (or restore) many names at once."""
+    return {"updated": db.set_valid_bulk(body.ids, body.valid)}
 
 
 class DirectName(BaseModel):

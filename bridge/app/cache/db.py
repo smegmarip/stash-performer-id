@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS names (
     id             INTEGER PRIMARY KEY,
     name           TEXT NOT NULL,
     disambiguation TEXT NOT NULL DEFAULT '',
-    valid          INTEGER,                   -- NULL = untriaged, 1 = valid, 0 = invalid
+    valid          INTEGER NOT NULL DEFAULT 1, -- valid by default; triage invalidates the junk
     edited_by      TEXT,
     edited_at      TEXT,
     UNIQUE(name, disambiguation)
@@ -156,9 +156,10 @@ class Database:
 
         Returns the number of newly-inserted names.
         """
+        # valid defaults to 1 (valid-by-default; triage invalidates the junk).
         cur = self.conn.execute(
-            """INSERT OR IGNORE INTO names(name, disambiguation, valid)
-               SELECT DISTINCT name, '', NULL FROM name_candidate"""
+            """INSERT OR IGNORE INTO names(name, disambiguation)
+               SELECT DISTINCT name, '' FROM name_candidate"""
         )
         self.conn.commit()
         return cur.rowcount
@@ -193,7 +194,6 @@ class Database:
     _STATUS_WHERE = {
         "valid": "WHERE valid = 1",
         "invalid": "WHERE valid = 0",
-        "untriaged": "WHERE valid IS NULL",
     }
 
     def list_names(
@@ -226,7 +226,7 @@ class Database:
         params: list = []
         if valid is not _UNSET:
             sets.append("valid = ?")
-            params.append(None if valid is None else int(valid))
+            params.append(int(bool(valid)))
         if name is not _UNSET:
             sets.append("name = ?")
             params.append(name)
@@ -243,6 +243,18 @@ class Database:
         )
         self.conn.commit()
         return self.get_name(name_id) if cur.rowcount else None
+
+    def set_valid_bulk(self, ids: list[int], valid: bool) -> int:
+        """Batch valid/invalid over many names. Returns the number of rows updated."""
+        if not ids:
+            return 0
+        placeholders = ",".join("?" * len(ids))
+        cur = self.conn.execute(
+            f"UPDATE names SET valid = ?, edited_at = ? WHERE id IN ({placeholders})",
+            [int(bool(valid)), _now(), *ids],
+        )
+        self.conn.commit()
+        return cur.rowcount
 
     def add_direct_name(self, name: str, disambiguation: str = "") -> dict:
         """Direct-input name (marked valid)."""
