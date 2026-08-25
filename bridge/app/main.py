@@ -11,6 +11,7 @@ from strawberry.fastapi import GraphQLRouter
 from strawberry.schema.config import StrawberryConfig
 
 from bridge.app.api import assets as assets_api
+from bridge.app.api import enrichment as enrichment_api
 from bridge.app.api import harvest as harvest_api
 from bridge.app.api import names as names_api
 from bridge.app.api import scrape as scrape_api
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(harvest_api.router)
     app.include_router(assets_api.router)
     app.include_router(scrape_api.router)
+    app.include_router(enrichment_api.router)
     app.include_router(thumbnails_api.router)
 
     @app.get("/healthz")

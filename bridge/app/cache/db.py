@@ -4,6 +4,7 @@ Five tables: asset, asset_relationship, name_candidate (raw harvest) and names,
 name_relationship (deduplicated / triaged / activated). SQLite, WAL, idempotent schema.
 """
 
+import json
 import os
 import sqlite3
 from datetime import UTC, datetime
@@ -72,6 +73,50 @@ CREATE TABLE IF NOT EXISTS name_relationship (
 -- One active name per asset (DESIGN §5).
 CREATE UNIQUE INDEX IF NOT EXISTS ux_active_name_per_asset
     ON name_relationship(asset_id) WHERE active = 1;
+
+-- Enrichment (docs/ENRICHMENT.md): a cache tier (every candidate from every search) plus a
+-- resolved profile per name, all FK'd to names.
+CREATE TABLE IF NOT EXISTS enrichment_search (
+    id           INTEGER PRIMARY KEY,
+    name_id      INTEGER NOT NULL REFERENCES names(id) ON DELETE CASCADE,
+    source       TEXT NOT NULL,
+    query        TEXT,
+    result_count INTEGER NOT NULL DEFAULT 0,
+    error        TEXT,
+    searched_at  TEXT NOT NULL,
+    UNIQUE(name_id, source)          -- one cache marker per (name, source)
+);
+
+CREATE TABLE IF NOT EXISTS enrichment_candidate (
+    id               INTEGER PRIMARY KEY,
+    name_id          INTEGER NOT NULL REFERENCES names(id) ON DELETE CASCADE,
+    source           TEXT NOT NULL,
+    source_entity_id TEXT NOT NULL,
+    data             TEXT NOT NULL,   -- JSON PerformerData
+    score            REAL,
+    fetched_at       TEXT NOT NULL,
+    UNIQUE(name_id, source, source_entity_id)
+);
+CREATE INDEX IF NOT EXISTS ix_enrich_cand ON enrichment_candidate(name_id, source);
+
+CREATE TABLE IF NOT EXISTS enrichment_profile (
+    name_id INTEGER PRIMARY KEY REFERENCES names(id) ON DELETE CASCADE,
+    name TEXT, disambiguation TEXT, aliases TEXT, gender TEXT, birthdate TEXT,
+    death_date TEXT, ethnicity TEXT, country TEXT, hair_color TEXT, eye_color TEXT,
+    height TEXT, weight TEXT, measurements TEXT, fake_tits TEXT, penis_length TEXT,
+    circumcised TEXT, career_start TEXT, career_end TEXT, tattoos TEXT, piercings TEXT,
+    details TEXT, urls TEXT, images TEXT,
+    field_sources TEXT,              -- {field: source} provenance
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS enrichment_credit_ledger (
+    id      INTEGER PRIMARY KEY,
+    source  TEXT NOT NULL,
+    cost    INTEGER NOT NULL,
+    name_id INTEGER,
+    at      TEXT NOT NULL
+);
 """
 
 
@@ -457,6 +502,140 @@ class Database:
             (asset_id,),
         ).fetchone()
         return dict(active) if active else None
+
+    # --- enrichment (docs/ENRICHMENT.md) ---
+
+    # The resolved-profile columns (superset of possible fields); list-valued ones are JSON.
+    _PROFILE_COLS = (
+        "name", "disambiguation", "aliases", "gender", "birthdate", "death_date",
+        "ethnicity", "country", "hair_color", "eye_color", "height", "weight",
+        "measurements", "fake_tits", "penis_length", "circumcised", "career_start",
+        "career_end", "tattoos", "piercings", "details", "urls", "images",
+    )
+    _PROFILE_LIST_COLS = frozenset({"aliases", "urls", "images"})
+
+    def has_enrichment_search(self, name_id: int, source: str) -> bool:
+        """True if a (name, source) search has been run — the cache-first marker."""
+        return (
+            self.conn.execute(
+                "SELECT 1 FROM enrichment_search WHERE name_id = ? AND source = ?",
+                (name_id, source),
+            ).fetchone()
+            is not None
+        )
+
+    def record_enrichment_search(
+        self, name_id: int, source: str, query: str, result_count: int, error: str | None = None
+    ) -> None:
+        self.conn.execute(
+            "INSERT INTO enrichment_search(name_id, source, query, result_count, error,"
+            " searched_at) VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(name_id, source) DO UPDATE SET"
+            " query=excluded.query, result_count=excluded.result_count,"
+            " error=excluded.error, searched_at=excluded.searched_at",
+            (name_id, source, query, result_count, error, _now()),
+        )
+        self.conn.commit()
+
+    def replace_candidates(self, name_id: int, source: str, candidates: list[dict]) -> None:
+        """Replace the cached candidates for (name, source). `candidates` items:
+        {source_entity_id, data: dict, score?}."""
+        self.conn.execute(
+            "DELETE FROM enrichment_candidate WHERE name_id = ? AND source = ?", (name_id, source)
+        )
+        for c in candidates:
+            self.conn.execute(
+                "INSERT INTO enrichment_candidate(name_id, source, source_entity_id, data, score,"
+                " fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (name_id, source, c["source_entity_id"], json.dumps(c["data"]),
+                 c.get("score"), _now()),
+            )
+        self.conn.commit()
+
+    def list_candidates(self, name_id: int, source: str | None = None) -> list[dict]:
+        where = "name_id = ?"
+        params: list = [name_id]
+        if source:
+            where += " AND source = ?"
+            params.append(source)
+        rows = self.conn.execute(
+            f"SELECT source, source_entity_id, data, score FROM enrichment_candidate"
+            f" WHERE {where} ORDER BY id",
+            params,
+        ).fetchall()
+        return [
+            {
+                "source": r["source"],
+                "source_entity_id": r["source_entity_id"],
+                "score": r["score"],
+                "data": json.loads(r["data"]),
+            }
+            for r in rows
+        ]
+
+    def get_enrichment_profile(self, name_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM enrichment_profile WHERE name_id = ?", (name_id,)
+        ).fetchone()
+        if not row:
+            return None
+        out = dict(row)
+        for col in self._PROFILE_LIST_COLS:
+            out[col] = json.loads(out[col]) if out.get(col) else []
+        out["field_sources"] = json.loads(out["field_sources"]) if out.get("field_sources") else {}
+        return out
+
+    def apply_enrichment_profile(self, name_id: int, fields: dict) -> dict | None:
+        """Write the given fields onto the resolved profile (override), recording provenance.
+
+        `fields` maps column -> {"value": ..., "source": ...} (or a bare value). Only whitelisted,
+        populated columns are written; the rest of the profile is untouched (docs §5.3).
+        """
+        self.conn.execute(
+            "INSERT OR IGNORE INTO enrichment_profile(name_id, updated_at) VALUES (?, ?)",
+            (name_id, _now()),
+        )
+        row = self.conn.execute(
+            "SELECT field_sources FROM enrichment_profile WHERE name_id = ?", (name_id,)
+        ).fetchone()
+        sources = json.loads(row["field_sources"]) if row and row["field_sources"] else {}
+        sets: list[str] = []
+        params: list = []
+        for col, spec in fields.items():
+            if col not in self._PROFILE_COLS:
+                continue
+            value = spec.get("value") if isinstance(spec, dict) else spec
+            src = spec.get("source") if isinstance(spec, dict) else None
+            if col in self._PROFILE_LIST_COLS:
+                value = json.dumps(value or [])
+            sets.append(f"{col} = ?")
+            params.append(value)
+            if src:
+                sources[col] = src
+        sets.append("field_sources = ?")
+        params.append(json.dumps(sources))
+        sets.append("updated_at = ?")
+        params.append(_now())
+        params.append(name_id)
+        self.conn.execute(
+            f"UPDATE enrichment_profile SET {', '.join(sets)} WHERE name_id = ?", params
+        )
+        self.conn.commit()
+        return self.get_enrichment_profile(name_id)
+
+    def add_credit(self, source: str, cost: int, name_id: int | None = None) -> None:
+        self.conn.execute(
+            "INSERT INTO enrichment_credit_ledger(source, cost, name_id, at) VALUES (?, ?, ?, ?)",
+            (source, cost, name_id, _now()),
+        )
+        self.conn.commit()
+
+    def credits_spent(self, source: str) -> int:
+        r = self.conn.execute(
+            "SELECT COALESCE(SUM(cost), 0) n FROM enrichment_credit_ledger WHERE source = ?",
+            (source,),
+        ).fetchone()
+        return r["n"]
 
     def add_direct_name(self, name: str, disambiguation: str = "") -> dict:
         """Direct-input name (marked valid)."""
