@@ -200,6 +200,13 @@ the affected assets, respecting the partial-unique-active constraint.
 
 ## 7. Enrichment — a stash-box metadata-provider service
 
+> **Superseded by `ENRICHMENT.md` (2026-08).** The current design makes enrichment a
+> **viewer-driven, persisted layer** (asset → name → enriched profile; cache + resolved-profile
+> tables FK'd to `names`) that the **image scraper reads** — not primarily a stash-box surface
+> consumed by Stash's native PerformerTagger. The `Provider`/`PerformerData` seam, Wikidata +
+> parse.bot sources, credit discipline, and QID/`thb:` ids below still hold; read `ENRICHMENT.md`
+> for the authoritative model, tables, API, and flows. The paragraphs below are the original framing.
+
 Enrichment is delivered by a **companion service that impersonates a Stash-Box** (Stash's
 native metadata-backend protocol), modeled on `iafd-metadata-provider`. It is registered in
 Stash under Settings → Metadata Providers → Stash-Boxes with endpoint `${BASE_URL}/graphql`.

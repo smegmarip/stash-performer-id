@@ -5,6 +5,8 @@ and registers them as Stash performers with optional external enrichment.
 
 - **Design:** [`docs/DESIGN.md`](docs/DESIGN.md)
 - **Plan:** [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
+- **Image tagger (Step 2):** [`docs/IMAGE_TAGGER_FEASIBILITY.md`](docs/IMAGE_TAGGER_FEASIBILITY.md)
+- **Enrichment:** [`docs/ENRICHMENT.md`](docs/ENRICHMENT.md)
 
 ## Components
 
