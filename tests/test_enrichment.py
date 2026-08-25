@@ -128,6 +128,20 @@ def test_apply_profile_endpoint(ctx):
     assert got["gender"] == "Female"
 
 
+def test_profiles_status(ctx):
+    db, client, nid = ctx
+    db.apply_enrichment_profile(
+        nid,
+        {
+            "gender": {"value": "Female", "source": "wikidata"},
+            "country": {"value": "US", "source": "babepedia"},
+        },
+    )
+    r = client.get("/enrichment/profiles", params={"name_ids": str(nid)}).json()["profiles"]
+    assert r[str(nid)]["fields"] == 2
+    assert set(r[str(nid)]["sources"]) == {"wikidata", "babepedia"}
+
+
 def test_search_batch_populates(ctx):
     db, client, nid = ctx
     nid2 = db.add_direct_name("Marilyn Monroe")["id"]

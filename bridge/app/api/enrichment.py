@@ -148,6 +148,22 @@ def get_profile(name_id: int = Query(...), db: Database = Depends(get_db)) -> di
     return {"name_id": name_id, "profile": db.get_enrichment_profile(name_id)}
 
 
+@router.get("/profiles")
+def profiles(name_ids: str = Query(...), db: Database = Depends(get_db)) -> dict:
+    """Lightweight per-name profile status for a page of names: field count + source(s)."""
+    out: dict[int, dict] = {}
+    for tok in name_ids.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        nid = int(tok)
+        p = db.get_enrichment_profile(nid)
+        if p:
+            fs = p["field_sources"]
+            out[nid] = {"fields": len(fs), "sources": sorted(set(fs.values()))}
+    return {"profiles": out}
+
+
 class ApplyProfile(BaseModel):
     name_id: int
     # {column: {"value": ..., "source": ...}} — only populated fields are sent.
