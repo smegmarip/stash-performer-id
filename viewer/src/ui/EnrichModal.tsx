@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, LIST_FIELDS, PROFILE_FIELDS } from "../lib/api";
+import { api, PROFILE_FIELDS } from "../lib/api";
 import type { Candidate, FieldApply } from "../lib/api";
 
 // The scene-tagger resolve flow, in the viewer's stack: candidate grid → per-field ✓/✕ + an
@@ -57,6 +57,24 @@ function ResolvePane({
     onApply(payload);
   };
 
+  // A field's value cell (URLs -> link list; other lists -> comma-joined; scalars -> text).
+  const valueCell = (field: string, value: unknown) => {
+    if (field === "urls" && Array.isArray(value)) {
+      return (
+        <ul className="list-disc ps-4">
+          {value.map((u, i) => (
+            <li key={i} className="truncate">
+              <a href={String(u)} target="_blank" rel="noreferrer" className="link link-primary">
+                {String(u)}
+              </a>
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    return fieldDisplay(value);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -69,76 +87,81 @@ function ResolvePane({
         </span>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto]">
-        {/* Fields with per-field include toggles */}
-        <ul className="divide-base-content/10 divide-y">
+      {/* Two-column layout mirroring Stash's PerformerModal: fields (7) | image (5). */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
+        <div className="space-y-1.5 md:col-span-7">
           {fields.map(({ field, value }) => {
             const on = included.has(field);
             return (
-              <li key={field} className="flex items-start gap-3 py-1.5">
-                <button
-                  type="button"
-                  className={`btn btn-circle btn-xs mt-0.5 ${on ? "btn-success" : "btn-error btn-soft"}`}
-                  title={on ? "included" : "excluded"}
-                  onClick={() => toggle(field)}
-                >
-                  <span className={`${on ? "icon-[tabler--check]" : "icon-[tabler--x]"} size-3.5`} />
-                </button>
-                <div className={`min-w-0 grow ${on ? "" : "opacity-40"}`}>
-                  <div className="text-base-content/50 text-xs capitalize">
-                    {field.replace(/_/g, " ")}
-                    {LIST_FIELDS.has(field) && <span className="ms-1">(list)</span>}
-                  </div>
-                  <div className="break-words text-sm">{fieldDisplay(value)}</div>
+              <div key={field} className="grid grid-cols-12 items-start gap-2">
+                <div className="col-span-5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-soft btn-xs btn-square"
+                    title={on ? "included — click to exclude" : "excluded — click to include"}
+                    onClick={() => toggle(field)}
+                  >
+                    <span
+                      className={`size-4 ${on ? "icon-[tabler--check] text-success" : "icon-[tabler--x] text-base-content/40"}`}
+                    />
+                  </button>
+                  <strong className="capitalize">{field.replace(/_/g, " ")}:</strong>
                 </div>
-              </li>
+                <div className={`col-span-7 break-words text-sm ${on ? "" : "opacity-40"}`}>
+                  {valueCell(field, value)}
+                </div>
+              </div>
             );
           })}
           {fields.length === 0 && (
-            <li className="text-base-content/50 py-4 text-sm">This candidate has no fields.</li>
+            <div className="text-base-content/50 py-4 text-sm">This candidate has no fields.</div>
           )}
-        </ul>
+        </div>
 
-        {/* Image carousel */}
+        {/* Image selection column */}
         {images.length > 0 && (
-          <div className="w-full md:w-56">
+          <div className="md:col-span-5">
             <div className="bg-base-200 rounded-box relative overflow-hidden">
-              <img
-                src={images[imgIdx]}
-                alt=""
-                className={`h-56 w-full object-cover ${imgIncluded ? "" : "opacity-30"}`}
-                loading="lazy"
-              />
               <button
                 type="button"
-                className={`btn btn-circle btn-xs absolute end-1 top-1 ${imgIncluded ? "btn-success" : "btn-error btn-soft"}`}
+                className="btn btn-soft btn-xs btn-square absolute end-2 top-2 z-10"
                 title={imgIncluded ? "image included" : "image excluded"}
                 onClick={() => setImgIncluded((v) => !v)}
               >
-                <span className={`${imgIncluded ? "icon-[tabler--check]" : "icon-[tabler--x]"} size-3.5`} />
+                <span
+                  className={`size-4 ${imgIncluded ? "icon-[tabler--check] text-success" : "icon-[tabler--x] text-base-content/40"}`}
+                />
+              </button>
+              <img
+                src={images[imgIdx]}
+                alt=""
+                className={`h-72 w-full object-contain ${imgIncluded ? "" : "opacity-30"}`}
+                loading="lazy"
+              />
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                className="btn btn-soft btn-sm btn-square"
+                disabled={images.length === 1}
+                onClick={() => setImgIdx((i) => (i - 1 + images.length) % images.length)}
+              >
+                <span className="icon-[tabler--arrow-left] size-4" />
+              </button>
+              <h5 className="text-base-content/70 grow text-center text-sm">
+                Select performer image
+                <br />
+                {imgIdx + 1} of {images.length}
+              </h5>
+              <button
+                type="button"
+                className="btn btn-soft btn-sm btn-square"
+                disabled={images.length === 1}
+                onClick={() => setImgIdx((i) => (i + 1) % images.length)}
+              >
+                <span className="icon-[tabler--arrow-right] size-4" />
               </button>
             </div>
-            {images.length > 1 && (
-              <div className="mt-1 flex items-center justify-between">
-                <button
-                  type="button"
-                  className="btn btn-soft btn-xs"
-                  onClick={() => setImgIdx((i) => (i - 1 + images.length) % images.length)}
-                >
-                  <span className="icon-[tabler--chevron-left] size-4" />
-                </button>
-                <span className="text-base-content/50 text-xs">
-                  {imgIdx + 1} / {images.length}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-soft btn-xs"
-                  onClick={() => setImgIdx((i) => (i + 1) % images.length)}
-                >
-                  <span className="icon-[tabler--chevron-right] size-4" />
-                </button>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -153,7 +176,7 @@ function ResolvePane({
           onClick={apply}
           disabled={busy || (included.size === 0 && !imgIncluded)}
         >
-          Apply {included.size + (imgIncluded && images.length ? 1 : 0)} field(s)
+          Save
         </button>
       </div>
     </div>
