@@ -69,11 +69,20 @@
     return window.csLib.callGQL({ query: query, variables: variables });
   }
 
+  // The full ScrapedPerformer selection (all standalone fields our provider may return).
+  // career_start/career_end are not queryable on ScrapedPerformer (only the deprecated
+  // career_length is exposed), so they are intentionally omitted.
+  var _SCRAPED_PERFORMER =
+    " performers { name disambiguation aliases gender birthdate death_date ethnicity country" +
+    " hair_color eye_color height weight measurements fake_tits penis_length circumcised" +
+    " tattoos piercings details urls images stored_id remote_site_id }";
+
   function scrapeImage(imageId) {
     return gql(
       "query ($source: ScraperSourceInput!, $input: ScrapeSingleImageInput!) {" +
         " scrapeSingleImage(source: $source, input: $input) {" +
-        " performers { name disambiguation stored_id remote_site_id } } }",
+        _SCRAPED_PERFORMER +
+        " } }",
       { source: { scraper_id: SCRAPER_ID }, input: { image_id: String(imageId) } }
     ).then(function (d) {
       var results = d && d.scrapeSingleImage;
@@ -123,18 +132,104 @@
     });
   }
 
-  function createPerformer(scraped) {
-    var input = { name: scraped.name };
-    if (scraped.disambiguation) input.disambiguation = scraped.disambiguation;
-    if (scraped.remote_site_id) {
-      input.stash_ids = [{ endpoint: ENDPOINT, stash_id: String(scraped.remote_site_id) }];
+  // Source gender strings -> Stash GenderEnum.
+  var GENDER_ENUM = {
+    female: "FEMALE",
+    male: "MALE",
+    "transgender female": "TRANSGENDER_FEMALE",
+    "trans female": "TRANSGENDER_FEMALE",
+    "transgender male": "TRANSGENDER_MALE",
+    "trans male": "TRANSGENDER_MALE",
+    intersex: "INTERSEX",
+    "non-binary": "NON_BINARY",
+    "non binary": "NON_BINARY",
+  };
+
+  // Build a PerformerCreateInput from an enriched ScrapedPerformer + chosen image (mirrors Stash's
+  // PerformerModal.onSaveClicked). `excluded` is a {field: true} map of fields to drop.
+  function buildPerformerInput(s, excluded, imageUrl) {
+    excluded = excluded || {};
+    var input = { name: s.name };
+    function put(field, key, val) {
+      if (!excluded[field] && val != null && val !== "") input[key] = val;
     }
+    put("disambiguation", "disambiguation", s.disambiguation);
+    if (!excluded.aliases && s.aliases) {
+      input.alias_list = s.aliases
+        .split(",")
+        .map(function (a) {
+          return a.trim();
+        })
+        .filter(Boolean);
+    }
+    if (!excluded.gender && s.gender) {
+      var g = GENDER_ENUM[String(s.gender).toLowerCase().trim()];
+      if (g) input.gender = g;
+    }
+    put("birthdate", "birthdate", s.birthdate);
+    put("death_date", "death_date", s.death_date);
+    put("ethnicity", "ethnicity", s.ethnicity);
+    put("country", "country", s.country);
+    put("hair_color", "hair_color", s.hair_color);
+    put("eye_color", "eye_color", s.eye_color);
+    if (!excluded.height && s.height) {
+      var h = parseInt(s.height, 10);
+      if (!isNaN(h)) input.height_cm = h;
+    }
+    if (!excluded.weight && s.weight) {
+      var w = parseInt(s.weight, 10);
+      if (!isNaN(w)) input.weight = w;
+    }
+    put("measurements", "measurements", s.measurements);
+    put("fake_tits", "fake_tits", s.fake_tits);
+    put("circumcised", "circumcised", s.circumcised);
+    put("career_start", "career_start", s.career_start);
+    put("career_end", "career_end", s.career_end);
+    put("tattoos", "tattoos", s.tattoos);
+    put("piercings", "piercings", s.piercings);
+    put("details", "details", s.details);
+    if (!excluded.urls && s.urls && s.urls.length) input.urls = s.urls;
+    if (!excluded.image && imageUrl) input.image = imageUrl;
+    if (s.remote_site_id) {
+      input.stash_ids = [{ endpoint: ENDPOINT, stash_id: String(s.remote_site_id) }];
+    }
+    return input;
+  }
+
+  function createPerformer(scraped, excluded, imageUrl) {
+    var img = imageUrl != null ? imageUrl : scraped.images && scraped.images[0];
     return gql(
       "mutation ($input: PerformerCreateInput!) { performerCreate(input: $input) {" +
         " id name disambiguation } }",
-      { input: input }
+      { input: buildPerformerInput(scraped, excluded, img) }
     ).then(function (d) {
       return (d && d.performerCreate) || null;
+    });
+  }
+
+  // Ensure an existing performer carries our name-record stash_id, so future scrapes resolve
+  // regardless of spelling (the identify fix). No-op if already present.
+  function ensureStashId(performerId, nameId) {
+    if (!nameId) return Promise.resolve();
+    return gql(
+      "query ($id: ID!) { findPerformer(id: $id) { id stash_ids { endpoint stash_id } } }",
+      { id: String(performerId) }
+    ).then(function (d) {
+      var p = d && d.findPerformer;
+      if (!p) return;
+      var sid = String(nameId);
+      var existing = p.stash_ids || [];
+      if (existing.some(function (s) { return s.endpoint === ENDPOINT && s.stash_id === sid; })) {
+        return;
+      }
+      var list = existing.map(function (s) {
+        return { endpoint: s.endpoint, stash_id: s.stash_id };
+      });
+      list.push({ endpoint: ENDPOINT, stash_id: sid });
+      return gql(
+        "mutation ($input: PerformerUpdateInput!) { performerUpdate(input: $input) { id } }",
+        { input: { id: String(performerId), stash_ids: list } }
+      );
     });
   }
 
@@ -712,6 +807,182 @@
   }
 
   // =========================================================================
+  // PerformerCreateModal — Stash's PerformerModal (create mode) rebuilt with the
+  // native CSS classes: enriched fields on the left, image carousel on the right.
+  // =========================================================================
+
+  // Fields shown, in Stash's PerformerModal order. `list` = render as a URL list.
+  var CREATE_FIELDS = [
+    { key: "disambiguation", label: "Disambiguation" },
+    { key: "aliases", label: "Aliases" },
+    { key: "gender", label: "Gender" },
+    { key: "birthdate", label: "Birthdate" },
+    { key: "death_date", label: "Death Date" },
+    { key: "ethnicity", label: "Ethnicity" },
+    { key: "country", label: "Country" },
+    { key: "hair_color", label: "Hair Color" },
+    { key: "eye_color", label: "Eye Color" },
+    { key: "height", label: "Height" },
+    { key: "weight", label: "Weight" },
+    { key: "measurements", label: "Measurements" },
+    { key: "fake_tits", label: "Fake Tits" },
+    { key: "tattoos", label: "Tattoos" },
+    { key: "piercings", label: "Piercings" },
+    { key: "details", label: "Details" },
+    { key: "urls", label: "URLs", list: true },
+  ];
+
+  function PerformerCreateModal(props) {
+    var scraped = props.scraped;
+    var Modal = Bootstrap.Modal;
+    var Icon = api.components.Icon;
+    var imgs = scraped.images || [];
+    var idxS = useState(0);
+    var imgIdx = idxS[0];
+    var setImgIdx = idxS[1];
+    var busyS = useState(false);
+    var busy = busyS[0];
+    var setBusy = busyS[1];
+    var errS = useState(null);
+    var err = errS[0];
+    var setErr = errS[1];
+
+    function fieldRow(label, value, key) {
+      if (value == null || value === "") return null;
+      return el(
+        "div",
+        { className: "row no-gutters", key: key || label },
+        el("div", { className: "col-5 create-modal-field" }, el("strong", null, label + ":")),
+        el("div", { className: "col-7 create-modal-value" }, value)
+      );
+    }
+    function urlsRow(urls) {
+      if (!urls || !urls.length) return null;
+      return el(
+        "div",
+        { className: "row no-gutters", key: "urls" },
+        el("div", { className: "col-5 create-modal-field" }, el("strong", null, "URLs:")),
+        el(
+          "div",
+          { className: "col-7 create-modal-value" },
+          el(
+            "ul",
+            null,
+            urls.map(function (u, i) {
+              return el(
+                "li",
+                { key: i },
+                el("a", { href: u, target: "_blank", rel: "noreferrer" }, u)
+              );
+            })
+          )
+        )
+      );
+    }
+
+    function save() {
+      setBusy(true);
+      setErr(null);
+      createPerformer(scraped, {}, imgs.length ? imgs[imgIdx] : undefined)
+        .then(function (p) {
+          setBusy(false);
+          if (p) props.onCreated(p);
+          else setErr("performerCreate failed");
+        })
+        .catch(function (e) {
+          setBusy(false);
+          setErr(String(e));
+        });
+    }
+
+    var fieldNodes = [fieldRow("Name", scraped.name, "name")];
+    CREATE_FIELDS.forEach(function (f) {
+      fieldNodes.push(f.list ? urlsRow(scraped[f.key]) : fieldRow(f.label, scraped[f.key], f.key));
+    });
+
+    return el(
+      Modal,
+      {
+        show: true,
+        onHide: props.onClose,
+        dialogClassName: "performer-create-modal",
+        size: "lg",
+      },
+      el(
+        Modal.Header,
+        { closeButton: true },
+        el(Modal.Title, null, "Create performer: " + scraped.name)
+      ),
+      el(
+        Modal.Body,
+        null,
+        err && el("div", { className: "text-danger font-weight-bold mb-2" }, err),
+        el(
+          "div",
+          { className: "row" },
+          el("div", { className: "col-7" }, fieldNodes),
+          imgs.length
+            ? el(
+                "div",
+                { className: "col-5 image-selection" },
+                el(
+                  "div",
+                  { className: "performer-image" },
+                  el("img", { src: imgs[imgIdx], alt: "" })
+                ),
+                el(
+                  "div",
+                  { className: "d-flex mt-3" },
+                  el(
+                    Button,
+                    {
+                      onClick: function () {
+                        setImgIdx(function (i) {
+                          return (i - 1 + imgs.length) % imgs.length;
+                        });
+                      },
+                      disabled: imgs.length === 1,
+                    },
+                    el(Icon, { icon: FA.faArrowLeft })
+                  ),
+                  el(
+                    "h5",
+                    { className: "flex-grow-1 text-center" },
+                    "Select performer image",
+                    el("br"),
+                    imgIdx + 1 + " of " + imgs.length
+                  ),
+                  el(
+                    Button,
+                    {
+                      onClick: function () {
+                        setImgIdx(function (i) {
+                          return (i + 1) % imgs.length;
+                        });
+                      },
+                      disabled: imgs.length === 1,
+                    },
+                    el(Icon, { icon: FA.faArrowRight })
+                  )
+                )
+              )
+            : null
+        )
+      ),
+      el(
+        Modal.Footer,
+        null,
+        el(Button, { variant: "secondary", onClick: props.onClose, disabled: busy }, "Cancel"),
+        el(
+          Button,
+          { variant: "primary", onClick: save, disabled: busy },
+          busy ? el(Spinner, { animation: "border", size: "sm" }) : "Create"
+        )
+      )
+    );
+  }
+
+  // =========================================================================
   // ImageCard — a scene-tagger-style card: header (thumb / title / current /
   // Scrape) with a Collapse slidedown for the assignment (suggestion + picker).
   // =========================================================================
@@ -767,11 +1038,12 @@
               size: "sm",
               className: "mr-2",
               disabled: busy,
+              title: "Review the enriched fields and create the performer",
               onClick: function () {
-                props.onCreate(image);
+                props.onOpenCreate(image);
               },
             },
-            'Create "' + scraped.name + '"'
+            'Create "' + scraped.name + '"…'
           )
         );
       }
@@ -939,6 +1211,9 @@
     var progress = progS[0];
     var setProgress = progS[1];
     var stoppingRef = useRef(false);
+    var createTargetS = useState(null); // { image, scraped } for the create modal
+    var createTarget = createTargetS[0];
+    var setCreateTarget = createTargetS[1];
 
     // Filters
     var filterOpenS = useState(false);
@@ -1070,30 +1345,29 @@
       patchRow(id, { open: !(st && st.open) });
     }
 
-    function onCreate(image) {
+    // Open the create-review modal for a scraped image (enriched fields + image carousel).
+    function onOpenCreate(image) {
       var st = rowState[image.id];
-      var scraped = st && st.scraped;
-      if (!scraped || !scraped.name) return;
-      patchRow(image.id, { status: "busy", action: "create" });
-      createPerformer(scraped)
-        .then(function (p) {
-          if (p) patchRow(image.id, { selected: p, status: "idle", action: null });
-          else patchRow(image.id, { status: "error", action: null, message: "performerCreate failed" });
-        })
-        .catch(function (e) {
-          patchRow(image.id, { status: "error", action: null, message: String(e) });
-        });
+      if (st && st.scraped && st.scraped.name) {
+        setCreateTarget({ image: image, scraped: st.scraped });
+      }
     }
 
-    // Merge one image's selected performer (returns a promise).
+    // Merge one image's selected performer (returns a promise). Stamps the chosen performer's
+    // stash_ids with the name-record id first, so future scrapes auto-resolve (the identify fix).
     function saveOne(image, sel) {
+      var st = rowState[image.id];
+      var nameId = st && st.scraped && st.scraped.remote_site_id;
       var existing = (image.performers || []).map(function (p) {
         return p.id;
       });
       var ids = existing.slice();
       if (ids.indexOf(sel.id) < 0) ids.push(sel.id);
       patchRow(image.id, { status: "busy", action: "save" });
-      return associate(image.id, ids)
+      return ensureStashId(sel.id, nameId)
+        .then(function () {
+          return associate(image.id, ids);
+        })
         .then(function (updated) {
           if (updated) patchRow(image.id, { status: "saved", action: null });
           else patchRow(image.id, { status: "error", action: null, message: "imageUpdate failed" });
@@ -1178,12 +1452,12 @@
     function rowTarget(im) {
       var st = rowState[im.id];
       if (!st) return null;
+      var nameId = st.scraped && st.scraped.remote_site_id;
       if (st.selected) {
-        return { key: "id:" + st.selected.id, id: st.selected.id, scraped: null, imageId: im.id };
+        return { key: "id:" + st.selected.id, id: st.selected.id, scraped: null, nameId: nameId, imageId: im.id };
       }
       if (st.scraped && st.scraped.name) {
-        var k = st.scraped.remote_site_id || st.scraped.name;
-        return { key: "new:" + k, id: null, scraped: st.scraped, imageId: im.id };
+        return { key: "new:" + (nameId || st.scraped.name), id: null, scraped: st.scraped, nameId: nameId, imageId: im.id };
       }
       return null;
     }
@@ -1196,7 +1470,9 @@
       if (!rows.length || progress) return;
       var groups = {};
       rows.forEach(function (r) {
-        var g = groups[r.key] || (groups[r.key] = { id: r.id, scraped: r.scraped, imageIds: [] });
+        var g =
+          groups[r.key] ||
+          (groups[r.key] = { id: r.id, scraped: r.scraped, nameId: r.nameId, imageIds: [] });
         g.imageIds.push(r.imageId);
       });
       setProgress({ done: 0, total: rows.length, saving: true });
@@ -1217,11 +1493,17 @@
                   });
                   return;
                 }
-                return bulkAssociate(g.imageIds, pid).then(function () {
-                  g.imageIds.forEach(function (id) {
-                    patchRow(id, { status: "saved", action: null });
+                // Existing performers get stamped with our stash_id; created ones already have it.
+                var stamp = g.id ? ensureStashId(pid, g.nameId) : Promise.resolve();
+                return stamp
+                  .then(function () {
+                    return bulkAssociate(g.imageIds, pid);
+                  })
+                  .then(function () {
+                    g.imageIds.forEach(function (id) {
+                      patchRow(id, { status: "saved", action: null });
+                    });
                   });
-                });
               })
               .then(function () {
                 setProgress(function (pr) {
@@ -1480,7 +1762,7 @@
                   onToggleOpen: onToggleOpen,
                   onScrape: onScrape,
                   onSelect: onSelect,
-                  onCreate: onCreate,
+                  onOpenCreate: onOpenCreate,
                   onSave: onSave,
                 });
               })
@@ -1493,7 +1775,20 @@
         perPage: perPage,
         onPageChange: setPage,
         footer: true,
-      })
+      }),
+
+      // Create-review modal (enriched fields + image carousel), Stash's PerformerModal reused.
+      createTarget &&
+        el(PerformerCreateModal, {
+          scraped: createTarget.scraped,
+          onClose: function () {
+            setCreateTarget(null);
+          },
+          onCreated: function (performer) {
+            patchRow(createTarget.image.id, { selected: performer, status: "idle" });
+            setCreateTarget(null);
+          },
+        })
     );
   }
 
