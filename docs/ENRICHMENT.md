@@ -22,7 +22,8 @@ active-source selector.
 - **Enrichment never touches the scrape/association path.** It is precomputed and persisted; the
   `imageByFragment` scraper only **reads** the resolved profile (a DB join) and never calls an
   external API. So batch "Scrape All" in the image tagger costs zero credits.
-- **Sources are pluggable.** Wikidata (free) and parse.bot (metered) today; the `Provider` seam
+- **Sources are pluggable.** Babepedia (free, rich bio — primary for this domain), Wikidata
+  (free bio), and parse.bot/The Handbook (metered, image + socials) today; the `Provider` seam
   is open to more. Source selection picks _which API runs a search_ — there is **no cross-source
   merge policy** (see §5.3).
 - **Search results and profiles are persisted separately.** Every candidate from every search is
@@ -142,10 +143,16 @@ class Provider(Protocol):
 `enrichment_profile` (§2) carries the same standalone columns; `enrichment_candidate.data` is a
 serialized `PerformerData`.
 
-- **`WikidataProvider`** (free; use liberally): label/aliases, P569 birthdate, P106 occupation,
-  P21 gender, P27 country, P18 image, official URLs. `source_entity_id` = QID.
-- **`ParseBotProvider`** (metered: **199 test credits**, ≤5 req/min): socials, thumbnail, richer
-  bio via thehandbook. `source_entity_id` = `thb:<id>`.
+- **`BabepediaProvider`** (free; **primary bio source** for this domain): the full performer
+  superset — birthdate/death, country, ethnicity, hair/eye, height, weight, measurements,
+  fake_tits, tattoos, piercings, aliases, details, socials, image gallery. Two-step (ajax-search →
+  top-5 babe pages), lxml XPath ported from CommunityScrapers, cloudscraper for Cloudflare.
+  `source_entity_id` = babe slug.
+- **`WikidataProvider`** (free): bio via claims — aliases, P569 birthdate, P21 gender, P27 country,
+  P1884 hair, P2048 height, P18 image, official/social URLs. `source_entity_id` = QID.
+- **`ParseBotProvider`** (metered: **199 test credits**): The Handbook `search_profiles` — a
+  talent-contact directory, so **image + profile URL** (type → disambiguation, social_reach →
+  score) only, no bio. `source_entity_id` = profile id.
 - A `providers` registry exposes the list to the viewer's active-source selector; adding a source
   = one new `Provider` impl + registry entry.
 
