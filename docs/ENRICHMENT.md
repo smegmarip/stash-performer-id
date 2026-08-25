@@ -14,19 +14,29 @@ active-source selector.
 
 ## 1. Principles
 
-- **Name stays the reference key.** `names.id` (+ `disambiguation`) is the stable, durable
-  identifier for enriched data. No schema refactor — enrichment is a **new set of tables with a
-  FK to `names.id`**, layered on the existing name↔asset relationship.
+- **Name stays the reference key.** `names.id` is already the stable, durable identifier for a
+  name — no disambiguation needed. `disambiguation` is a plain field of the profile that exists
+  only for Stash compatibility and user convenience, never part of the id. No schema refactor —
+  enrichment is a **new set of tables with a FK to `names.id`**, layered on the existing
+  name↔asset relationship.
 - **Enrichment never touches the scrape/association path.** It is precomputed and persisted; the
   `imageByFragment` scraper only **reads** the resolved profile (a DB join) and never calls an
   external API. So batch "Scrape All" in the image tagger costs zero credits.
 - **Sources are pluggable.** Wikidata (free) and parse.bot (metered) today; the `Provider` seam
-  is open to more. Source selection picks *which API runs a search* — there is **no cross-source
+  is open to more. Source selection picks _which API runs a search_ — there is **no cross-source
   merge policy** (see §5.3).
 - **Search results and profiles are persisted separately.** Every candidate from every search is
   cached; the resolved profile is composed from them by explicit, field-level user choices.
 - **Credit-safe.** Cache-first, sequential-async requests (Stash Batch Search paradigm),
   Wikidata-first (free), parse.bot metered behind a ledger; degrade gracefully when capped.
+- **Reuse the scene tagger's tagging framework — do not reinvent it.** The candidate grid, the
+  per-field `IncludeButton`/`OptionalField` ✓/✕ override, the image carousel, and the
+  create/update result modal already exist in Stash's Tagger (`components/Tagger/**`). Port that
+  component decomposition and interaction model into the enrichment UI and wire our data layer to
+  it; the only thing we author is the data plumbing, not a new tagging UI. (Where a component is
+  reachable natively — e.g. `PerformerSelect` via pluginApi — use it directly; where it is internal,
+  port its structure + reuse the tagger CSS classes rather than redesigning, as the image-tagger
+  page already does with `search-item`/`tagger-container`.)
 
 ---
 
@@ -59,13 +69,13 @@ enrichment_candidate     -- one row per matched entity a search returned
 **Resolved tier — one composed profile per name, what the scraper reads:**
 
 ```
-enrichment_profile
-  name_id PK   FK names(id) ON DELETE CASCADE
-  -- Stash-aligned fields, each nullable; applied/overridden field-by-field:
-  name TEXT, disambiguation TEXT, aliases TEXT(json), gender TEXT, birthdate TEXT,
-  ethnicity TEXT, country TEXT, hair_color TEXT, eye_color TEXT, height TEXT,
-  measurements TEXT, fake_tits TEXT, tattoos TEXT, piercings TEXT,
-  career_start TEXT, career_end TEXT, urls TEXT(json), image_url TEXT,
+enrichment_profile           -- same standalone fields as PerformerData (§3), each nullable,
+  name_id PK   FK names(id)      applied/overridden field-by-field
+  name TEXT, disambiguation TEXT, aliases TEXT(json),
+  gender TEXT, birthdate TEXT, death_date TEXT, ethnicity TEXT, country TEXT,
+  hair_color TEXT, eye_color TEXT, height TEXT, weight TEXT, measurements TEXT,
+  fake_tits TEXT, penis_length TEXT, circumcised TEXT, career_start TEXT, career_end TEXT,
+  tattoos TEXT, piercings TEXT, details TEXT, urls TEXT(json), images TEXT(json),
   field_sources TEXT(json)   -- per-field provenance {field: source} for display
   updated_at TEXT
 ```
@@ -83,18 +93,44 @@ enrichment_credit_ledger
 
 A source-neutral DTO and a protocol; resolvers/UI depend only on the DTO.
 
+`PerformerData` mirrors **Stash's full performer schema** (`ScrapedPerformer` / `PerformerCreateInput`),
+excluding every field that references a Stash entity or is Stash-management state, so each field is
+**standalone** (scalar or list-of-scalar). Excluded: `tags`/`tag_ids`, `stash_ids`, `favorite`,
+`rating100`, `ignore_auto_tag`, `custom_fields`, and the deprecated `url`/`twitter`/`instagram`/
+`career_length`/`image` (folded into `urls`/`images`).
+
 ```python
 @dataclass
-class PerformerData:            # maps 1:1 to Stash ScrapedPerformer
+class PerformerData:            # standalone subset of Stash's performer schema
     source: str
     source_entity_id: str
+    # identity
     name: str
     disambiguation: str | None
-    aliases: list[str]
-    gender / birthdate / ethnicity / country / hair_color / eye_color / height /
-    measurements / fake_tits / tattoos / piercings / career_start / career_end: str | None
+    aliases: list[str]         # -> alias_list
+    # bio
+    gender: str | None
+    birthdate: str | None
+    death_date: str | None
+    ethnicity: str | None
+    country: str | None
+    hair_color: str | None
+    eye_color: str | None
+    height: str | None         # cm (-> height_cm)
+    weight: str | None
+    measurements: str | None
+    fake_tits: str | None
+    penis_length: str | None
+    circumcised: str | None
+    career_start: str | None
+    career_end: str | None
+    tattoos: str | None
+    piercings: str | None
+    details: str | None
+    # media / links
     urls: list[str]
-    images: list[str]          # source image URLs (proxied via the service image cache)
+    images: list[str]          # source image URLs (served via the /images proxy)
+    # meta
     score: float | None
 
 class Provider(Protocol):
@@ -102,6 +138,9 @@ class Provider(Protocol):
     metered: bool
     def search(self, term: str) -> list[PerformerData]: ...
 ```
+
+`enrichment_profile` (§2) carries the same standalone columns; `enrichment_candidate.data` is a
+serialized `PerformerData`.
 
 - **`WikidataProvider`** (free; use liberally): label/aliases, P569 birthdate, P106 occupation,
   P21 gender, P27 country, P18 image, official URLs. `source_entity_id` = QID.
@@ -133,6 +172,7 @@ class Provider(Protocol):
 ## 5. Flows
 
 ### 5.1 Individual (disambiguation)
+
 Enrichment view → pick a **valid** name → **Search** (active source) → **candidate grid** (thumb +
 name + disambiguation, from cache or live) → click the right candidate → **resolve modal**:
 per-field **✓/✕** toggles + an **image carousel** (pick 1 of N, or exclude) → **Save** writes the
@@ -140,18 +180,27 @@ per-field **✓/✕** toggles + an **image carousel** (pick 1 of N, or exclude) 
 from it — the profile accumulates field-by-field.
 
 ### 5.2 Batch — two modes (both, mirroring the native pair)
-- **Search All (populate)** — *primary*. Sequential search of the selected names against the
+
+- **Search All (populate)** — _primary_. Sequential search of the selected names against the
   active source; saves all candidates to cache; **resolves nothing** (disambiguation deferred to
   manual pick). Safe and re-runnable.
-- **Update (auto-resolve)** — *secondary*, like "Batch Update Performers". Applies each name's top
+- **Update (auto-resolve)** — _secondary_, like "Batch Update Performers". Applies each name's top
   match onto its profile, honoring the excluded-fields default. For the unambiguous cases.
 
 ### 5.3 Field override semantics — **no precedence config**
+
 The profile is a standalone record. Source selection only chooses which API a search runs against;
 candidates from all searches are cached separately. Applying a candidate writes its **✓-checked
 fields onto the profile**, overriding just those and leaving the rest. "Precedence" is simply
 whatever the user last toggled in — there is no automatic merge policy. A global **excluded-fields**
 default (e.g. Name) is bypassed on every apply, matching the native tagger's Configuration panel.
+
+**Only populated fields are exposed.** `PerformerData` defines the *superset* of possible fields,
+but a candidate rarely fills them all. The resolve modal (and the plugin create/update) lists
+**only the fields the selected candidate actually returned** (non-null/non-empty) — empty fields
+are omitted from the UI and never written, exactly as the native tagger shows only the fields a
+candidate provided. Likewise `update-batch` only writes populated fields. Having a column in the
+schema never forces it into the UI.
 
 ---
 
@@ -159,8 +208,9 @@ default (e.g. Name) is bypassed on every apply, matching the native tagger's Con
 
 `/scrape/image` (unchanged trigger) now returns a **full `ScrapedPerformer`** built from
 `enrichment_profile` for the image's active name:
+
 - `stored_id` — the matched local performer, resolved by the provider: `findPerformers(
-  stash_id_endpoint {endpoint:"stash-performer-id", stash_id:name_id})` → else exact/alias name.
+stash_id_endpoint {endpoint:"stash-performer-id", stash_id:name_id})` → else exact/alias name.
 - `remote_site_id` = `name_id` (the durable, spelling-independent link; §3 / DESIGN §8).
 - all enriched fields (gender, country, urls, images, …) when a profile exists; **name-only** when
   it doesn't (enrichment is optional).
@@ -180,14 +230,18 @@ so future scrapes of the same name auto-resolve regardless of spelling.
   **credit meter** for metered sources.
 - Shows which fields are set on each profile and their provenance (`field_sources`).
 
+Built by porting the scene tagger's Tagger result components + `IncludeButton`/`OptionalField`
+framework (§1 reuse principle), wired to the §4 service API — not a new tagging UI.
+
 ---
 
 ## 8. Plugin — image-tagger create upgrade
 
-The per-image slidedown grows from "name only" to the scene-tagger result shape: the scraped
-fields shown with **✓/✕** include toggles + an **image carousel**, and **Create / Select / Skip**.
-Because `PerformerModal` is internal to Stash (only `PerformerSelect` is plugin-exposed), we
-rebuild a slim create-preview from primitives and call `performerCreate` with the composed input.
+The per-image slidedown grows from "name only" to the scene-tagger result shape (§1 reuse
+principle): the scraped fields shown with the tagger's **✓/✕** `IncludeButton`/`OptionalField`
+toggles + an **image carousel**, and **Create / Select / Skip** (`PerformerSelect` used directly).
+`PerformerModal`/`StashSearchResult` are internal to Stash, so we **port their structure and reuse
+the tagger CSS classes** (not a fresh design), and call `performerCreate` with the composed input.
 
 ---
 
@@ -207,4 +261,4 @@ when the cap is reached — never silently, always surfaced in the view.
    into `/scrape/image` (+ `stored_id` resolution).
 2. **Viewer** — the Enrichment view (source selector, candidate grid, resolve modal, batch).
 3. **Plugin** — the richer image-tagger create (field ✓/✕, image pick, full `performerCreate`)
-   + stamp-on-save for existing performers.
+   - stamp-on-save for existing performers.
