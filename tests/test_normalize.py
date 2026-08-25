@@ -23,6 +23,14 @@ class TestNames:
         raw = "Jennifer Lawrence Interview WEB DL"
         assert candidate(raw) == raw
 
+    def test_apostrophe_name_kept_whole(self):
+        # Intra-name apostrophes must not split the surname (O'Dell -> O + Dell was a bug).
+        assert candidate("Jennifer O'Dell") == "Jennifer O'Dell"
+        assert candidate("D'Angelo Russell") == "D'Angelo Russell"
+
+    def test_curly_apostrophe_normalized(self):
+        assert candidate("Jennifer O’Dell") == "Jennifer O'Dell"
+
 
 class TestGarbage:
     def test_pure_hash_mostly_dies(self):
@@ -50,4 +58,9 @@ class TestTokenize:
         assert tokenize("J K Rowling") == ["Rowling"]
 
     def test_whitespace_and_punct(self):
-        assert tokenize("  Anne---Marie   O'Brien ") == ["Anne", "Marie", "Brien"]
+        # Hyphens still separate (ambiguous with word-separator use); apostrophes join letters.
+        assert tokenize("  Anne---Marie   O'Brien ") == ["Anne", "Marie", "O'Brien"]
+
+    def test_trailing_apostrophe_not_joined(self):
+        # An apostrophe with no following letter is just a separator (no dangling token).
+        assert tokenize("Jennifer O' Dell") == ["Jennifer", "Dell"]
