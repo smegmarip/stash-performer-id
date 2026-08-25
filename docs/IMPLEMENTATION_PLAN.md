@@ -10,12 +10,19 @@ tagger page only (UI, no Python).
 Sequencing principle: **prove harvest/candidate quality in the service before any UI, build
 the Step 1 viewer before the Step 2 tagger, and wire the metered enrichment last.**
 
+> **Status (2026-08).** Phases **0–2 are built and committed** (service + name DB + harvest + audit;
+> viewer Step-1 activation/cascade + FlyonUI redesign). Deployment is **local Docker**, not the remote
+> Unraid host this plan originally named (see the revised Deployment section). **Phase 3 (the image
+> tagger) is the current work** — its authoritative spec is **`IMAGE_TAGGER_FEASIBILITY.md`**, which
+> supersedes the Phase-3 details below: images-only, plain-JS (no `tsc`), suggestions via the
+> provider's `imageByFragment` scraper, and `PerformerSelect` (inline create) — *not* `PerformerModal`.
+
 ---
 
 ## Phase 0 — Monorepo scaffold
 **Goal:** the three pieces exist, deploy, and are reachable.
 
-- [ ] Monorepo skeleton (DESIGN §10): `bridge/app/` (service), `plugin/` (`celebrity-id.yml`
+- [ ] Monorepo skeleton (DESIGN §10): `bridge/app/` (service), `plugin/` (`stash-performer-id.yml`
       `ui:`-only + `js/`+`css/`), `viewer/` (stub), `docker-compose.yml`, `Dockerfile`,
       `pyproject.toml`.
 - [ ] Service skeleton: FastAPI + Strawberry (`auto_camel_case=False`), `/graphql` + `/healthz`;
@@ -23,10 +30,10 @@ the Step 1 viewer before the Step 2 tagger, and wire the metered enrichment last
       read-only media mount. Runs on a `15000–15999` port.
 - [ ] Plugin: `ui:`-only manifest; `PluginApi.register.route('/plugins/performer-id-tagger',
       Page)` + `patch.before('MainNavBar.UtilityItems', …)` rendering a "hello" page.
-- [ ] Deploy to `192.168.50.93:/mnt/user/appdata/stash-performer-id` via rsync + compose
-      (confirm remote change first). Smoke test: `/healthz` reachable; nav link opens page.
+- [ ] Bring up the local `docker-compose` stack (service + viewer) against the host's Stash
+      (`host.docker.internal:9999`). Smoke test: `/healthz` reachable; nav link opens page.
 
-**Exit:** service + plugin + viewer stub deploy on the remote host; plugin page routes.
+**Exit:** service + plugin + viewer stub run in the local Docker stack; plugin page routes.
 
 ---
 
@@ -67,21 +74,27 @@ cascade; invalid names are flagged out; direct input works. Still zero Stash wri
 
 ---
 
-## Phase 3 — Stash tagger page: Step 2 (name → performer; Stash writes begin)
-**Goal:** turn activated names into Stash performers + associations.
+## Phase 3 — Stash image tagger: Step 2 (name → performer; Stash writes begin)
+**Goal:** turn activated names into Stash performers + associations. **Authoritative spec:
+`IMAGE_TAGGER_FEASIBILITY.md`** (images-only; plain JS; provider-scraper suggestions).
 
-- [ ] Tagger page reads each asset's active name from the service API (CORS for the Stash
-      origin). Row list with image thumbnail / gallery cover.
-- [ ] Reuse Stash core: `PerformerSelect` (match existing), `PerformerModal` (create →
-      `performerCreate`), `useFindPerformer`/`usePerformerCreate`.
-- [ ] Save: `imageUpdate`/`galleryUpdate`/`sceneUpdate`
-      `performer_ids: uniq(existing.concat(chosen))`; bulk `ADD` for one-performer-many-assets.
-      Stamp `stash_ids:[{endpoint:"celebrity-id", stash_id:<names.id>}]` (DESIGN §8).
-- [ ] Idempotency: resolve "already a performer?" via
-      `findPerformers(stash_id_endpoint:{endpoint:"celebrity-id", …})`.
+- [ ] **Provider scraper surface:** a Stash scraper YAML with `imageByFragment` (`action: script` →
+      service HTTP) + a service endpoint that maps an image `path`/`urls` → its activated name in
+      `name_relationship`, returning `{performers:[{name, remote_site_id}]}`.
+- [ ] **Plugin scaffold:** `ui:`-only manifest (`javascript`/`css`, `requires:
+      CommunityScriptsUILibrary`), plain-JS IIFE over `window.PluginApi`, `register.route` + nav patch.
+- [ ] **List shell (lift from `tag-manager.js`):** `useFindImagesQuery` + `image_filter`
+      (tags/path/organized) + sort + per-page + pager + `useLoadComponents` gate.
+- [ ] **Per-image row:** thumbnail, current performers, **Scrape** (`scrapeSingleImage(our-scraper,
+      image_id)`) → **`PerformerSelect`** (match existing / inline-create) → **Save**.
+- [ ] Save resolves each scraped performer (`stored_id` → `findPerformers(stash_id_endpoint)` →
+      `findPerformers(name)` → `performerCreate({name, stash_ids})`) and writes
+      `imageUpdate`/`bulkImageUpdate(performer_ids, mode: ADD)`; stamp the name-record `stash_ids`
+      on create (DESIGN §8).
+- [ ] Idempotency: "already a performer?" via `findPerformers(stash_id_endpoint:{endpoint, …})`.
 
-**Exit:** an activated name becomes a Stash performer associated with the correct assets
-(per-image where required); re-runs create no duplicates and merge associations.
+**Exit:** an activated image name becomes a Stash performer associated with the correct images;
+re-runs create no duplicates and merge associations.
 
 ---
 
@@ -105,14 +118,13 @@ budget, auto-stamps the QID stash_id, and cached names cost zero credits.
 ---
 
 ## Deployment (all phases)
-- **Draft locally, build/deploy remotely** — local repo is source of truth; sync via
-  rsync/scp; never edit on the remote host.
-- Remote host: `192.168.50.93:/mnt/user/appdata/stash-performer-id` (Unraid appdata);
-  `docker-compose` on Stash's network; service port from **15000–15999**.
-- Any first-time change to the remote host is confirmed with the user before it's made.
+- **Local Docker (revised 2026-08).** The remote Unraid host (`192.168.50.93`) was abandoned; the
+  `docker-compose` stack builds and runs on the dev machine against the host's Stash at
+  `host.docker.internal:9999`. Local repo is the source of truth.
+- Ports single-sourced via env: service `SERVICE_PORT` (15000), viewer `VIEWER_PORT` (15001).
 
 ## Cross-cutting / definition of done
-- Service + plugin + viewer run on the remote host against Stash v0.30.1.
+- Service + plugin + viewer run in the local Docker stack against Stash v0.30.1.
 - The service is the single owner/writer of the name DB.
 - No Stash performer write happens except through a user action in the tagger page.
 - No credit is spent from harvest/audit; enrichment is cache-first and budget-guarded.

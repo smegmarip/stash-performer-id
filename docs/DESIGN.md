@@ -29,8 +29,12 @@ Status: **converged design.** Phased build in `IMPLEMENTATION_PLAN.md`.
   Wikidata is not a superset of thehandbook (names exist outside both), so any classifier
   would need manual recovery anyway — leaving only the manual triage, which is all we keep.
 - **Self-scraping thehandbook.com** (Cloudflare-challenge protected; parse.bot absorbs it).
-- **Fragment-scrape bridge for association.** Obviated by the plugin tagger page (§6):
-  since the page holds the name, it associates via direct mutations, no scraper round-trip.
+- ~~**Fragment-scrape bridge for association.**~~ **Reinstated (2026-08).** Step 2 associates
+  *natively via the metadata provider*: the image tagger fetches each image's suggested performer
+  through the provider's `imageByFragment` **script scraper** (`scrapeSingleImage`), then writes the
+  association with a direct `imageUpdate`. The provider is the association vehicle, not just
+  enrichment. See **`IMAGE_TAGGER_FEASIBILITY.md`** — the authoritative Step-2 spec, which supersedes
+  the §3/§6 "direct mutations, no scraper" / `PerformerModal` details below.
 - **Face recognition** (a separate, complementary track).
 
 ---
@@ -55,11 +59,14 @@ asset, with a gallery→folder→file cascade. Materialized into the `name_relat
 This is name-record management — it happens in the **standalone viewer** (§10), not in Stash;
 nothing touches Stash performers yet.
 
-**Step 2 — name → performer (UI = the Stash tagger page).** In the plugin tagger page inside
-Stash, each asset shows its active name. The user confirms; the page matches an
-existing performer (`findPerformers` by name) or creates one (`performerCreate`, reusing
-Stash's `PerformerModal`), then associates it via `imageUpdate` / `galleryUpdate` /
-`sceneUpdate` `performer_ids` (merge-add). Direct mutations — no scraper.
+**Step 2 — name → performer (UI = the Stash image-tagger page).** In the plugin tagger page inside
+Stash, each image shows its active name *as a scraped suggestion*, fetched through the provider's
+`imageByFragment` script scraper (`scrapeSingleImage(our-scraper, image_id)`). The user confirms or
+adjusts with **`PerformerSelect`** (match existing / inline-create), then the page resolves to a
+performer id (`stored_id` → `stash_id` → name → `performerCreate`) and writes the association via
+`imageUpdate` / `bulkImageUpdate` `performer_ids` (merge-add). **Scope: images** — scenes use Stash's
+native tagger, galleries are TBD. Full spec: **`IMAGE_TAGGER_FEASIBILITY.md`** (which supersedes the
+`PerformerModal` / "no scraper" mentions in §6 and §8 below).
 
 Key platform facts this respects (verified in source):
 - **Gallery performers do not propagate to images.** `GalleryUpdateInput.performer_ids` and
@@ -142,12 +149,19 @@ Notes:
 
 ## 6. The plugin Tagger page (the missing batch UI)
 
+> **Superseded by `IMAGE_TAGGER_FEASIBILITY.md` for Step-2 specifics.** That report is the
+> authoritative build spec: the tagger is **images-only**, authored as **plain JS** (no `tsc`/build
+> step), lifts its filter/sort/pager shell near-verbatim from **`stash-auto-vision-tagging/js/tag-manager.js`**,
+> reuses **`PerformerSelect`** (inline create — *not* `PerformerModal`), and fetches suggestions via the
+> provider's `imageByFragment` scraper. Read the paragraphs below as the original rationale, not the
+> current mechanism.
+
 Stash has no image/gallery tagger, so the plugin ships one as a standalone React page,
 adapting the scene Tagger's UX. **Feasibility verified** against the Stash UI plugin API and
 the `stash-duplicate-scene-finder` reference.
 
 **Mounting (both the pattern and the reference are confirmed):**
-- `PluginApi.register.route('/plugins/celebrity-id-tagger', TaggerPage)` — standalone page.
+- `PluginApi.register.route('/plugins/stash-performer-id-tagger', TaggerPage)` — standalone page.
 - `PluginApi.patch.before('MainNavBar.UtilityItems', …)` — nav-bar entry link.
 - Everything from `window.PluginApi`: `React` (+ `React.createElement`, no JSX), `GQL`
   reactive hooks, `libraries.Bootstrap`, `libraries.ReactRouterDOM`, `components.*`; plus
@@ -220,7 +234,7 @@ field names match the stash-box SDL):
 
 **Endpoint ownership:** the service owns the **provider** stash_id (one endpoint = the
 service URL; the id is the QID or `thb:` fallback). The plugin's tagger page owns a
-*separate* **name-record** stash_id (`{ endpoint:"celebrity-id", stash_id:<names.id> }`, §8).
+*separate* **name-record** stash_id (`{ endpoint:"stash-performer-id", stash_id:<names.id> }`, §8).
 A fully-processed performer therefore carries up to two stash_ids. A performer created via
 the plugin page can be enriched later through the PerformerTagger and vice-versa; idempotency
 is by `stash_id` lookup.
@@ -240,7 +254,7 @@ lights up the native PerformerTagger. The companion Docker service is a confirme
 
 Per the design intent, there is **no plugin-side performer table.** Name→performer identity
 lives in Stash via **`stash_ids`**. At create time the tagger page stamps
-`stash_ids: [{ endpoint: "celebrity-id", stash_id: <names.id> }]` onto the performer — the
+`stash_ids: [{ endpoint: "stash-performer-id", stash_id: <names.id> }]` onto the performer — the
 durable link to the name record for all future actions (re-association, dedup, enrichment,
 sync). Enrichment through the metadata-provider service appends the service's own stash_id
 (one endpoint = the service URL; id = QID or `thb:` fallback), stamped natively by the
@@ -250,7 +264,7 @@ name-record link and the service's provider link.
 `stash_ids` is settable directly in `performerCreate`/`performerUpdate` (verified: no
 stash-box registration required, arbitrary endpoint strings stored verbatim) and is natively
 queryable. To answer "is this name already a performer here?", filter
-`findPerformers(stash_id_endpoint: {endpoint:"celebrity-id", stash_id:<names.id>})` — no
+`findPerformers(stash_id_endpoint: {endpoint:"stash-performer-id", stash_id:<names.id>})` — no
 mirrored state to keep in sync. The same `stash_id_endpoint` filter exists on image/gallery/
 scene lists, so associated assets are discoverable the same way.
 
@@ -298,7 +312,7 @@ stash-performer-id/
     cache/                      #   SQLite: name tables (§5) + enrichment cache + credit ledger
     stash/                      #   stash-box schema types + PerformerData DTO
   plugin/                       # Stash-side plugin — UI ONLY (installed into Stash plugins/)
-    celebrity-id.yml            #   ui: block only (no exec, no tasks)
+    stash-performer-id.yml            #   ui: block only (no exec, no tasks)
     js/  css/                   #   the Step 2 Tagger page (PluginApi)
   viewer/                       # standalone containerized React app (own Dockerfile) — Step 1 UI
   tests/  docs/  scripts/
@@ -318,16 +332,16 @@ Three cooperating pieces:
 
 ## 11. Deployment
 
-- **Draft locally, build/deploy remotely.** The local repo is the source of truth; files are
-  authored locally and synced (rsync/scp) — never edited directly on the remote host.
-- **Remote build host:** `192.168.50.93:/mnt/user/appdata/stash-performer-id` (Unraid
-  appdata). The service runs there via `docker-compose`, on the same Docker network as Stash.
-- **Service API port:** allocate from **15000–15999** (e.g. service on `15000`, viewer on a
-  second port in range). Avoids collisions with the reference bridges (13000/15001) and IAFD
-  (14999).
-- **Registration:** add the service as a Stash-Box (Settings → Metadata Providers →
-  Stash-Boxes), endpoint `http://<host>:<port>/graphql`, any non-empty API key.
-- Project folder will be renamed `stash-performer-id`; a git repo has been initialized for it.
+**Local Docker (revised 2026-08).** The earlier remote-Unraid plan (`192.168.50.93`) was abandoned —
+everything runs in the **local** `docker-compose` stack against the host's Stash.
+
+- **Draft locally, run locally.** The local repo is the source of truth. The compose stack builds and
+  runs on the dev machine; the service reaches the host's Stash at `host.docker.internal:9999`.
+- **Ports (single-sourced via env, not hardcoded):** service `SERVICE_PORT` (default `15000`), viewer
+  `VIEWER_PORT` (default `15001`), from the **15000–15999** range.
+- **Registration:** add the service as a Stash-Box (Settings → Metadata Providers → Stash-Boxes),
+  endpoint `http://<host>:<port>/graphql`, any non-empty API key. The **image scraper** installs
+  separately as a scraper YAML in Stash's `scrapers/` dir (see `IMAGE_TAGGER_FEASIBILITY.md` §2).
 
 ---
 
