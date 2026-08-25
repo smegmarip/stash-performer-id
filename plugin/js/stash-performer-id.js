@@ -69,6 +69,39 @@
     return window.csLib.callGQL({ query: query, variables: variables });
   }
 
+  // -------------------------------------------------------------------------
+  // Stash version -> which performer stash_ids filter key to use.
+  // The criterion was named `stash_id_endpoint` through v0.30.1 and renamed to the plural
+  // `stash_ids_endpoint` afterwards. Query the version once (cached) and pick the key so the
+  // identify path keeps working across the rename (docs/IMAGE_TAGGER_FEASIBILITY.md §v0.30.1 note).
+  // -------------------------------------------------------------------------
+
+  // "v0.30.1" -> [0,30,1]; anything unparseable -> [0,0,0].
+  function parseVersion(v) {
+    var m = /(\d+)\.(\d+)\.(\d+)/.exec(String(v || ""));
+    return m ? [+m[1], +m[2], +m[3]] : [0, 0, 0];
+  }
+
+  function versionGt(a, b) {
+    for (var i = 0; i < 3; i++) {
+      if (a[i] !== b[i]) return a[i] > b[i];
+    }
+    return false;
+  }
+
+  var _stashIdKey = null; // cached Promise<string>
+  function stashIdEndpointKey() {
+    if (!_stashIdKey) {
+      _stashIdKey = gql("{ version { version } }").then(function (d) {
+        var v = parseVersion(d && d.version && d.version.version);
+        // Post-0.30.1 uses the plural key; 0.30.1 and earlier (and an unreadable version,
+        // which falls back to [0,0,0]) use the singular — our documented target.
+        return versionGt(v, [0, 30, 1]) ? "stash_ids_endpoint" : "stash_id_endpoint";
+      });
+    }
+    return _stashIdKey;
+  }
+
   // The full ScrapedPerformer selection (all standalone fields our provider may return).
   // career_start/career_end are not queryable on ScrapedPerformer (only the deprecated
   // career_length is exposed), so they are intentionally omitted.
@@ -117,12 +150,14 @@
       return findPerformer(scraped.stored_id);
     }
     var byStashId = scraped.remote_site_id
-      ? findPerformers({
-          stash_id_endpoint: {
+      ? stashIdEndpointKey().then(function (key) {
+          var filter = {};
+          filter[key] = {
             endpoint: ENDPOINT,
             stash_id: String(scraped.remote_site_id),
             modifier: "EQUALS",
-          },
+          };
+          return findPerformers(filter);
         })
       : Promise.resolve(null);
     return byStashId.then(function (p) {
