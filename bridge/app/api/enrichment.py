@@ -1,7 +1,7 @@
 """Enrichment API (docs/ENRICHMENT.md §4).
 
-Cache-first candidate search per (name, source), and read/apply of the resolved profile. Batch
-endpoints, the credit ledger surface, and the image proxy land in a later pass.
+Cache-first candidate search per (name, source), read/apply of the resolved profile, and the
+batch populate/auto-resolve operations. The image proxy lands in a later pass.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from bridge.app.api.deps import get_db
 from bridge.app.cache.db import Database
 from bridge.app.config import get_settings
-from bridge.app.providers import ProviderError, get_provider, list_sources
+from bridge.app.providers import PerformerData, ProviderError, get_provider, list_sources
 
 router = APIRouter(prefix="/enrichment")
 
@@ -20,20 +20,9 @@ def _budget(source: str) -> int | None:
     return get_settings().parse_bot_budget if source == "parsebot" else None
 
 
-@router.get("/sources")
-def sources() -> dict:
-    return {"sources": list_sources()}
-
-
-@router.get("/candidates")
-def candidates(
-    name_id: int = Query(...),
-    source: str = Query(...),
-    refresh: bool = False,
-    db: Database = Depends(get_db),
-) -> dict:
-    """Cache-first: return cached candidates when the (name, source) search has run, else call the
-    provider, persist the results, and return them. `refresh=1` forces a live call."""
+def _run_search(db: Database, name_id: int, source: str, refresh: bool = False) -> dict:
+    """Cache-first search for one (name, source): cached candidates if already searched, else a
+    live provider call (persisted, credit-guarded). Shared by /candidates and the batch ops."""
     provider = get_provider(source)
     if provider is None:
         raise HTTPException(status_code=400, detail=f"unknown source '{source}'")
@@ -72,6 +61,80 @@ def candidates(
     db.record_enrichment_search(name_id, source, term, count, error)
     return {"name_id": name_id, "source": source, "cached": False, "error": error,
             "candidates": db.list_candidates(name_id, source)}
+
+
+@router.get("/sources")
+def sources() -> dict:
+    return {"sources": list_sources()}
+
+
+@router.get("/candidates")
+def candidates(
+    name_id: int = Query(...),
+    source: str = Query(...),
+    refresh: bool = False,
+    db: Database = Depends(get_db),
+) -> dict:
+    """Cache-first: return cached candidates when the (name, source) search has run, else call the
+    provider, persist the results, and return them. `refresh=1` forces a live call."""
+    return _run_search(db, name_id, source, refresh)
+
+
+class SearchBatch(BaseModel):
+    name_ids: list[int]
+    source: str
+
+
+@router.post("/search-batch")
+def search_batch(body: SearchBatch, db: Database = Depends(get_db)) -> dict:
+    """Populate: sequential cache-first search over the names against a source; resolves nothing.
+
+    Sequential and synchronous (Stash Batch Search paradigm); credit-guarded per metered call.
+    """
+    out = []
+    for nid in body.name_ids:
+        try:
+            r = _run_search(db, nid, body.source)
+            out.append({"name_id": nid, "count": len(r["candidates"]),
+                        "cached": r["cached"], "error": r["error"]})
+        except HTTPException as e:
+            out.append({"name_id": nid, "count": 0, "cached": False, "error": e.detail})
+    return {"source": body.source, "results": out}
+
+
+class UpdateBatch(BaseModel):
+    name_ids: list[int]
+    source: str
+    exclude_fields: list[str] = []
+
+
+@router.post("/update-batch")
+def update_batch(body: UpdateBatch, db: Database = Depends(get_db)) -> dict:
+    """Auto-resolve: for each name, ensure candidates (cache-first) then apply the best match's
+    populated fields (minus excluded) onto the profile. For the unambiguous cases."""
+    excl = set(body.exclude_fields)
+    out = []
+    for nid in body.name_ids:
+        try:
+            _run_search(db, nid, body.source)  # ensure candidates exist (cache-first)
+        except HTTPException as e:
+            out.append({"name_id": nid, "applied": 0, "error": e.detail})
+            continue
+        cands = db.list_candidates(nid, body.source)
+        if not cands:
+            out.append({"name_id": nid, "applied": 0, "error": None})
+            continue
+        top = max(cands, key=lambda c: c.get("score") or 0)  # best by score, else first
+        data = PerformerData.from_dict(top["data"])
+        fields = {
+            k: {"value": v, "source": body.source}
+            for k, v in data.populated_fields().items()
+            if k not in excl
+        }
+        if fields:
+            db.apply_enrichment_profile(nid, fields)
+        out.append({"name_id": nid, "applied": len(fields), "error": None})
+    return {"source": body.source, "results": out}
 
 
 @router.get("/credits")

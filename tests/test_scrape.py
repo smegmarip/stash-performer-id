@@ -61,3 +61,25 @@ def test_scrape_unassigned_image_returns_empty(ctx):
     body = client.post("/scrape/image", json={"id": "i3", "files": []}).json()
     assert body == {"performers": []}
     assert lone  # asset exists but carries no active name
+
+
+def test_scrape_merges_enrichment_profile(ctx):
+    db, client, nid = ctx
+    db.apply_enrichment_profile(
+        nid,
+        {
+            "name": {"value": "Jane Q. Doe", "source": "babepedia"},  # canonical spelling
+            "gender": {"value": "Female", "source": "babepedia"},
+            "country": {"value": "US", "source": "babepedia"},
+            "aliases": {"value": ["Janie", "JD"], "source": "babepedia"},
+            "urls": {"value": ["https://example.com/jane"], "source": "babepedia"},
+            "images": {"value": ["https://example.com/jane.jpg"], "source": "babepedia"},
+        },
+    )
+    p = client.post("/scrape/image", json={"id": "i1", "files": []}).json()["performers"][0]
+    assert p["name"] == "Jane Q. Doe"  # profile name overrides the activated name
+    assert p["remote_site_id"] == str(nid)
+    assert p["gender"] == "Female" and p["country"] == "US"
+    assert p["aliases"] == "Janie, JD"  # list -> comma-joined string (ScrapedPerformer shape)
+    assert p["urls"] == ["https://example.com/jane"]
+    assert p["images"] == ["https://example.com/jane.jpg"]

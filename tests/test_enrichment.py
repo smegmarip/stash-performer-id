@@ -128,6 +128,30 @@ def test_apply_profile_endpoint(ctx):
     assert got["gender"] == "Female"
 
 
+def test_search_batch_populates(ctx):
+    db, client, nid = ctx
+    nid2 = db.add_direct_name("Marilyn Monroe")["id"]
+    register(FakeProvider())
+    body = {"name_ids": [nid, nid2], "source": "faketest"}
+    r = client.post("/enrichment/search-batch", json=body).json()
+    assert {x["name_id"] for x in r["results"]} == {nid, nid2}
+    assert all(x["count"] == 1 and x["error"] is None for x in r["results"])
+    r2 = client.post("/enrichment/search-batch", json={"name_ids": [nid], "source": "faketest"})
+    assert r2.json()["results"][0]["cached"] is True  # cache-first on re-run
+
+
+def test_update_batch_auto_resolves(ctx):
+    db, client, nid = ctx
+    register(FakeProvider())  # returns country="UK", name=term
+    body = {"name_ids": [nid], "source": "faketest", "exclude_fields": ["name"]}
+    r = client.post("/enrichment/update-batch", json=body).json()
+    assert r["results"][0]["applied"] >= 1
+    prof = db.get_enrichment_profile(nid)
+    assert prof["country"] == "UK"
+    assert prof["name"] is None  # excluded field not applied
+    assert prof["field_sources"].get("country") == "faketest"
+
+
 # --- Wikidata mapping (mocked HTTP) ---
 
 
