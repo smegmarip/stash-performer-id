@@ -48,7 +48,6 @@
 
   var Bootstrap = api.libraries.Bootstrap;
   var Button = Bootstrap.Button;
-  var Table = Bootstrap.Table;
   var Badge = Bootstrap.Badge;
   var Modal = Bootstrap.Modal;
   var Form = Bootstrap.Form;
@@ -706,13 +705,16 @@
   }
 
   // =========================================================================
-  // ImageRow — thumbnail, current performers, Scrape -> PerformerSelect -> Save
+  // ImageCard — a scene-tagger-style card: header (thumb / title / current /
+  // Scrape) with a Collapse slidedown for the assignment (suggestion + picker).
   // =========================================================================
 
-  function ImageRow(props) {
+  function ImageCard(props) {
     var image = props.image;
-    var st = props.rowState || {}; // { scraped, selected, status, message }
+    var st = props.rowState || {}; // { scraped, selected, status, message, action, open }
     var PerformerSelect = api.components.PerformerSelect;
+    var Icon = api.components.Icon;
+    var Collapse = Bootstrap.Collapse;
 
     var filePath = image.visual_files && image.visual_files[0] ? image.visual_files[0].path : "";
     var thumb = image.paths && image.paths.thumbnail;
@@ -720,102 +722,23 @@
     var scraped = st.scraped;
     var selected = st.selected;
     var busy = st.status === "busy";
+    var open = !!st.open;
 
-    var cells = [];
-
-    // Selection checkbox
-    cells.push(
-      el(
-        "td",
-        { key: "sel", className: "select-col" },
-        el(
-          "label",
-          null,
-          el("input", {
-            type: "checkbox",
-            checked: !!props.checked,
-            onChange: function () {
-              props.onToggle(image.id);
-            },
-          })
-        )
-      )
-    );
-
-    // Thumbnail
-    cells.push(
-      el(
-        "td",
-        { key: "thumb", className: "spid-thumb-cell" },
-        el(
-          Link,
-          { to: "/images/" + image.id },
-          thumb ? el("img", { className: "image-thumbnail", src: thumb, loading: "lazy" }) : null
-        )
-      )
-    );
-
-    // Title / path
-    cells.push(
-      el(
-        "td",
-        { key: "name" },
-        el(
-          "div",
-          { className: "ellips-data" },
-          image.title || (filePath ? filePath.split("/").pop() : image.id)
-        ),
-        filePath && el("div", { className: "spid-image-path text-muted" }, filePath)
-      )
-    );
-
-    // Current performers
-    cells.push(
-      el(
-        "td",
-        { key: "current" },
-        current.length
-          ? current.map(function (p) {
-              return el(Badge, { key: p.id, className: "spid-perf-badge" }, p.name);
-            })
-          : el("span", { className: "text-muted" }, "—")
-      )
-    );
-
-    // Assignment: Scrape -> suggestion + PerformerSelect (+ Create) -> Save
-    var assignChildren = [
-      el(
-        Button,
-        {
-          key: "scrape",
-          variant: "secondary",
-          size: "sm",
-          className: "mr-2",
-          disabled: busy,
-          onClick: function () {
-            props.onScrape(image);
-          },
-        },
-        busy && st.action === "scrape"
-          ? el(Spinner, { animation: "border", size: "sm" })
-          : "Scrape"
-      ),
-    ];
-
-    if (scraped) {
-      assignChildren.push(
+    // --- assignment body (shown in the slidedown once scraped) ---
+    function renderBody() {
+      var body = [
         el(
           "span",
-          { key: "suggestion", className: "spid-suggestion mr-2" },
-          "→ ",
+          { key: "sg", className: "spid-suggestion mr-3" },
+          "Suggested: ",
           el("b", null, scraped.name || "(no match)")
-        )
-      );
+        ),
+      ];
       if (PerformerSelect) {
-        assignChildren.push(
+        body.push(
           el(
             "div",
-            { key: "select", className: "spid-perf-select" },
+            { key: "ps", className: "spid-perf-select mr-2" },
             el(PerformerSelect, {
               isMulti: false,
               isClearable: true,
@@ -828,14 +751,14 @@
         );
       }
       if (!selected && scraped.name) {
-        assignChildren.push(
+        body.push(
           el(
             Button,
             {
-              key: "create",
+              key: "cr",
               variant: "outline-success",
               size: "sm",
-              className: "ml-2",
+              className: "mr-2",
               disabled: busy,
               onClick: function () {
                 props.onCreate(image);
@@ -845,14 +768,13 @@
           )
         );
       }
-      assignChildren.push(
+      body.push(
         el(
           Button,
           {
-            key: "save",
+            key: "sv",
             variant: "primary",
             size: "sm",
-            className: "ml-2",
             disabled: busy || !selected,
             onClick: function () {
               props.onSave(image);
@@ -861,25 +783,108 @@
           busy && st.action === "save" ? el(Spinner, { animation: "border", size: "sm" }) : "Save"
         )
       );
+      if (st.status === "error") {
+        body.push(
+          el(
+            "span",
+            { key: "er", className: "spid-status text-danger ml-2", title: st.message },
+            "! " + (st.message || "error")
+          )
+        );
+      }
+      return body;
     }
 
-    if (st.status === "saved") {
-      assignChildren.push(
-        el("span", { key: "ok", className: "spid-status text-success ml-2" }, "✓ saved")
-      );
-    } else if (st.status === "error") {
-      assignChildren.push(
+    return el(
+      "div",
+      { className: "search-item spid-card" },
+      // --- header row ---
+      el(
+        "div",
+        { className: "spid-card-head d-flex align-items-center" },
         el(
-          "span",
-          { key: "err", className: "spid-status text-danger ml-2", title: st.message },
-          "! " + (st.message || "error")
+          "label",
+          { className: "spid-card-check mb-0 mr-3" },
+          el("input", {
+            type: "checkbox",
+            checked: !!props.checked,
+            onChange: function () {
+              props.onToggle(image.id);
+            },
+          })
+        ),
+        el(
+          Link,
+          { to: "/images/" + image.id, className: "spid-card-thumb mr-3" },
+          thumb ? el("img", { className: "image-thumbnail", src: thumb, loading: "lazy" }) : null
+        ),
+        el(
+          "div",
+          { className: "spid-card-info flex-grow-1 overflow-hidden" },
+          el(
+            "div",
+            { className: "spid-card-title ellips-data" },
+            image.title || (filePath ? filePath.split("/").pop() : image.id)
+          ),
+          filePath && el("div", { className: "spid-card-path text-muted" }, filePath),
+          el(
+            "div",
+            { className: "spid-card-current mt-1" },
+            current.length
+              ? current.map(function (p) {
+                  return el(Badge, { key: p.id, className: "spid-perf-badge" }, p.name);
+                })
+              : el("span", { className: "text-muted small" }, "No performers")
+          )
+        ),
+        el(
+          "div",
+          { className: "spid-card-actions d-flex align-items-center" },
+          st.status === "saved" && el("span", { className: "text-success mr-2" }, "✓ saved"),
+          el(
+            Button,
+            {
+              variant: "secondary",
+              size: "sm",
+              disabled: busy,
+              onClick: function () {
+                props.onScrape(image);
+              },
+            },
+            busy && st.action === "scrape"
+              ? el(Spinner, { animation: "border", size: "sm" })
+              : "Scrape"
+          ),
+          scraped &&
+            el(
+              Button,
+              {
+                variant: "minimal",
+                className: "spid-collapse-btn ml-1",
+                title: open ? "Collapse" : "Expand",
+                onClick: function () {
+                  props.onToggleOpen(image.id);
+                },
+              },
+              el(Icon, { icon: open ? FA.faChevronUp : FA.faChevronDown })
+            )
         )
-      );
-    }
-
-    cells.push(el("td", { key: "assign", className: "spid-assign-cell" }, assignChildren));
-
-    return el("tr", null, cells);
+      ),
+      // --- slidedown assignment ---
+      el(
+        Collapse,
+        { in: open },
+        el(
+          "div",
+          null,
+          el(
+            "div",
+            { className: "spid-card-body d-flex align-items-center flex-wrap" },
+            scraped ? renderBody() : null
+          )
+        )
+      )
+    );
   }
 
   // =========================================================================
@@ -1026,6 +1031,7 @@
               action: null,
               scraped: { name: null },
               selected: null,
+              open: true,
             });
             return;
           }
@@ -1035,6 +1041,7 @@
               action: null,
               scraped: scraped,
               selected: match || null,
+              open: true,
             });
           });
         })
@@ -1049,6 +1056,11 @@
 
     function onSelect(image, performer) {
       patchRow(image.id, { selected: performer, status: "idle" });
+    }
+
+    function onToggleOpen(id) {
+      var st = rowState[id];
+      patchRow(id, { open: !(st && st.open) });
     }
 
     function onCreate(image) {
@@ -1239,9 +1251,9 @@
 
     return el(
       "div",
-      { className: "spid-page" },
+      { className: "spid-page tagger-container mx-auto" },
 
-      // Toolbar (native list toolbar classes)
+      // View controls (native list toolbar classes)
       el(
         "div",
         { className: "filtered-list-toolbar btn-toolbar", role: "toolbar" },
@@ -1290,57 +1302,80 @@
             title: "Refresh",
           },
           el(api.components.Icon, { icon: FA.faSync })
-        ),
+        )
+      ),
 
-        // Batch actions — act on the checked rows, or the whole page when none are checked.
-        el("span", { className: "spid-toolbar-sep" }),
-        progress
-          ? el(
-              React.Fragment,
-              null,
-              !progress.saving &&
+      // Batch CTA row (scene-tagger style): select-all on the left, Scrape/Save on the right.
+      // They act on the checked rows, or the whole page when nothing is checked.
+      el(
+        "div",
+        {
+          className:
+            "spid-cta-row tagger-container-header d-flex justify-content-between" +
+            " align-items-center flex-wrap",
+        },
+        el(
+          "label",
+          { className: "spid-selectall mb-0" },
+          el("input", { type: "checkbox", checked: allSelected, onChange: toggleAll }),
+          el(
+            "span",
+            { className: "ml-2" },
+            selected.size ? selected.size + " selected" : "Select all"
+          )
+        ),
+        el(
+          "div",
+          { className: "d-flex align-items-center" },
+          progress
+            ? el(
+                React.Fragment,
+                null,
+                !progress.saving &&
+                  el(
+                    Button,
+                    { variant: "danger", onClick: onStop },
+                    el(api.components.Icon, { icon: FA.faStop }),
+                    " Stop"
+                  ),
+                el(
+                  "span",
+                  { className: "text-muted ml-2" },
+                  (progress.saving ? "Saving " : "Scraping ") +
+                    progress.done +
+                    "/" +
+                    progress.total
+                )
+              )
+            : el(
+                React.Fragment,
+                null,
                 el(
                   Button,
-                  { variant: "danger", onClick: onStop },
-                  el(api.components.Icon, { icon: FA.faStop }),
-                  " Stop"
+                  {
+                    variant: "secondary",
+                    onClick: onScrapeBatch,
+                    disabled: images.length === 0,
+                    title:
+                      "Scrape " + (selected.size ? selected.size + " selected" : "all on page"),
+                  },
+                  el(api.components.Icon, { icon: FA.faMagic }),
+                  " " + (selected.size ? "Scrape (" + scopeCount + ")" : "Scrape All")
                 ),
-              el(
-                "span",
-                { className: "text-muted ml-2" },
-                (progress.saving ? "Saving " : "Scraping ") +
-                  progress.done +
-                  "/" +
-                  progress.total
+                el(
+                  Button,
+                  {
+                    variant: "primary",
+                    onClick: onSaveBatch,
+                    disabled: savableCount === 0,
+                    className: "ml-2",
+                    title: "Save resolved rows",
+                  },
+                  el(api.components.Icon, { icon: FA.faSave }),
+                  " Save" + (savableCount ? " (" + savableCount + ")" : "")
+                )
               )
-            )
-          : el(
-              React.Fragment,
-              null,
-              el(
-                Button,
-                {
-                  variant: "secondary",
-                  onClick: onScrapeBatch,
-                  disabled: images.length === 0,
-                  title: "Scrape " + (selected.size ? selected.size + " selected" : "all on page"),
-                },
-                el(api.components.Icon, { icon: FA.faMagic }),
-                " Scrape " + (selected.size ? "(" + scopeCount + ")" : "page")
-              ),
-              el(
-                Button,
-                {
-                  variant: "primary",
-                  onClick: onSaveBatch,
-                  disabled: savableCount === 0,
-                  className: "ml-2",
-                  title: "Save resolved rows",
-                },
-                el(api.components.Icon, { icon: FA.faSave }),
-                " Save" + (savableCount ? " (" + savableCount + ")" : "")
-              )
-            )
+        )
       ),
 
       el(EditFilterModal, {
@@ -1402,49 +1437,21 @@
             )
           : el(
               "div",
-              { className: "table-list spid-image-table" },
-              el(
-                Table,
-                { striped: true, bordered: true },
-                el(
-                  "thead",
-                  null,
-                  el(
-                    "tr",
-                    null,
-                    el(
-                      "th",
-                      { className: "select-col" },
-                      el("input", {
-                        type: "checkbox",
-                        checked: allSelected,
-                        onChange: toggleAll,
-                      })
-                    ),
-                    el("th", { className: "spid-thumb-head" }, "Image"),
-                    el("th", null, "Title / Path"),
-                    el("th", null, "Current"),
-                    el("th", null, "Assignment")
-                  )
-                ),
-                el(
-                  "tbody",
-                  null,
-                  images.map(function (image) {
-                    return el(ImageRow, {
-                      key: image.id,
-                      image: image,
-                      rowState: rowState[image.id],
-                      checked: selected.has(image.id),
-                      onToggle: toggleRow,
-                      onScrape: onScrape,
-                      onSelect: onSelect,
-                      onCreate: onCreate,
-                      onSave: onSave,
-                    });
-                  })
-                )
-              )
+              { className: "spid-card-list" },
+              images.map(function (image) {
+                return el(ImageCard, {
+                  key: image.id,
+                  image: image,
+                  rowState: rowState[image.id],
+                  checked: selected.has(image.id),
+                  onToggle: toggleRow,
+                  onToggleOpen: onToggleOpen,
+                  onScrape: onScrape,
+                  onSelect: onSelect,
+                  onCreate: onCreate,
+                  onSave: onSave,
+                });
+              })
             ),
 
       el(PaginationNav, {

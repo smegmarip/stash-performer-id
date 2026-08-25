@@ -1,69 +1,96 @@
 /* Stash Performer ID — image tagger page.
-   Styling leans on Stash's native list classes (filtered-list-toolbar, table-list,
-   image-thumbnail, ellips-data, pagination-index-container). Only the tagger-specific
-   bits below are custom. */
+   Card / slidedown layout modeled on the scene tagger (.search-item cards in a
+   .tagger-container, with a Collapse for the per-image assignment). Leans on native
+   classes (filtered-list-toolbar, tagger-container, search-item, image-thumbnail,
+   pagination-index-container); only the tagger-specific bits below are custom. */
 
 .spid-page {
   padding: 0 1rem;
 }
 
-/* Vertical divider between the view controls and the batch actions in the toolbar. */
-.spid-toolbar-sep {
-  display: inline-block;
-  width: 1px;
-  height: 1.6rem;
-  background: rgba(255, 255, 255, 0.2);
+/* Scope the native .tagger-container width for a list (rather than a single detail page). */
+.spid-page.tagger-container {
+  max-width: 1400px;
 }
 
-.select-col {
-  width: 1px;
-  text-align: center;
+/* --- batch CTA row (above the card list) --- */
+
+.spid-cta-row {
+  gap: 0.5rem;
+  padding: 0.5rem 0;
 }
 
-/* Match the native scene-table viewport sizing (sticky header + scroll come from .table-list). */
-.table-list.spid-image-table {
-  max-height: calc(100dvh - 210px);
+.spid-selectall {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
 }
 
-.spid-image-table td {
-  vertical-align: middle;
+/* --- image cards --- */
+
+.spid-card-list {
+  display: flex;
+  flex-direction: column;
 }
 
-.spid-thumb-head,
-.spid-thumb-cell {
-  width: 74px;
+/* .search-item (native) supplies the card background, radius, and padding. */
+.spid-card {
+  margin-top: 0.75rem;
 }
 
-/* Fixed square box + cover: images have varied aspect ratios, so a fixed width
-   avoids the thin-strip look that height-only sizing gives portrait images. */
-.spid-image-table .image-thumbnail {
-  width: 58px;
-  height: 58px;
+.spid-card-check {
+  cursor: pointer;
+}
+
+.spid-card-thumb .image-thumbnail {
+  width: 72px;
+  height: 72px;
   object-fit: cover;
   border-radius: 4px;
   display: block;
 }
 
-.spid-image-path {
+.spid-card-info {
+  min-width: 0;
+}
+
+.spid-card-title {
+  font-weight: 500;
+}
+
+.spid-card-path {
   font-size: 0.8rem;
   opacity: 0.7;
   word-break: break-all;
 }
 
-.spid-perf-badge {
-  margin-right: 0.25rem;
+.spid-card-current {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
 }
 
-/* --- assignment cell: Scrape -> suggestion -> PerformerSelect -> Save --- */
+.spid-card-actions {
+  margin-left: auto;
+  white-space: nowrap;
+}
 
-.spid-assign-cell {
-  min-width: 340px;
+.spid-collapse-btn {
+  color: inherit;
+}
+
+/* --- slidedown assignment body --- */
+
+.spid-card-body {
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.75rem 0.25rem 0.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .spid-perf-select {
   display: inline-block;
-  min-width: 220px;
-  vertical-align: middle;
+  min-width: 240px;
 }
 
 .spid-suggestion {
@@ -73,6 +100,10 @@
 .spid-status {
   font-weight: 600;
   white-space: nowrap;
+}
+
+.spid-perf-badge {
+  margin-right: 0.25rem;
 }
 
 /* --- tag include/exclude control (filter modal; not a native-exposed widget) --- */
