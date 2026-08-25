@@ -7,9 +7,12 @@ are kept as URLs (served via the /images proxy) rather than base64. Cloudflare i
 cloudscraper. See docs/ENRICHMENT.md §3.
 """
 
+import json
 import re
 from datetime import datetime
+from urllib.parse import urlencode
 
+import requests
 from lxml import html
 
 from bridge.app.providers.base import ProviderError
@@ -17,6 +20,28 @@ from bridge.app.providers.models import PerformerData
 
 _BASE = "https://www.babepedia.com"
 _MAX_CANDIDATES = 5  # eager-fetch detail for the top matches; cached thereafter
+_BLOCKED = {403, 429, 503}  # Cloudflare challenge → fall back to FlareSolverr
+
+
+class _FSResp:
+    """A minimal response wrapper around a FlareSolverr solution."""
+
+    def __init__(self, text: str, status: int):
+        self.text = text
+        self.status_code = status
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise ProviderError(f"babepedia (flaresolverr): HTTP {self.status_code}")
+
+    def json(self):
+        # FlareSolverr renders in Chrome, so a JSON endpoint comes back HTML-wrapped (<pre>…</pre>).
+        try:
+            return json.loads(self.text.strip())
+        except json.JSONDecodeError:
+            tree = html.fromstring(self.text)
+            pre = tree.xpath("//pre/text()")
+            return json.loads(pre[0] if pre else tree.text_content())
 
 
 def _bio(tree, label: str, selector: str = "") -> str | None:
@@ -35,21 +60,48 @@ class BabepediaProvider:
     label = "Babepedia"
     metered = False
 
-    def __init__(self, client=None):
+    def __init__(self, client=None, flaresolverr_url: str | None = None):
         # A requests-like client: .get(url, params=?) -> resp with .text/.json()/.raise_for_status.
         if client is None:
             import cloudscraper
 
             client = cloudscraper.create_scraper()
         self._client = client
+        self._flaresolverr = flaresolverr_url
+
+    def _get(self, url: str, params: dict | None = None):
+        """cloudscraper first; on a Cloudflare block, fall back to FlareSolverr (if configured)."""
+        blocked = False
+        try:
+            resp = self._client.get(url, params=params)
+            if getattr(resp, "status_code", 200) not in _BLOCKED:
+                return resp
+            blocked = True
+        except Exception:  # noqa: BLE001 - network/cloudflare failure -> try FlareSolverr
+            blocked = True
+        if blocked and self._flaresolverr:
+            full = url + ("?" + urlencode(params) if params else "")
+            return self._flaresolverr_get(full)
+        raise ProviderError("babepedia: blocked by Cloudflare (no FlareSolverr configured)")
+
+    def _flaresolverr_get(self, url: str) -> _FSResp:
+        try:
+            r = requests.post(
+                self._flaresolverr, json={"cmd": "request.get", "url": url}, timeout=70
+            )
+            r.raise_for_status()
+            sol = r.json().get("solution") or {}
+        except requests.RequestException as e:
+            raise ProviderError(f"babepedia (flaresolverr): {e}") from e
+        return _FSResp(sol.get("response", ""), sol.get("status", 200))
 
     def search(self, term: str) -> list[PerformerData]:
         try:
-            resp = self._client.get(
-                f"{_BASE}/ajax-search.php", params={"term": term.replace("-", " ")}
-            )
+            resp = self._get(f"{_BASE}/ajax-search.php", params={"term": term.replace("-", " ")})
             resp.raise_for_status()
             results = resp.json()
+        except ProviderError:
+            raise
         except Exception as e:  # cloudscraper/requests raise plain exceptions
             raise ProviderError(f"babepedia: {e}") from e
 
@@ -69,7 +121,7 @@ class BabepediaProvider:
 
     def _detail(self, slug: str) -> PerformerData:
         url = f"{_BASE}/babe/{slug}"
-        resp = self._client.get(url)
+        resp = self._get(url)
         resp.raise_for_status()
         tree = html.fromstring(resp.text)
 

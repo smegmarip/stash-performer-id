@@ -317,6 +317,55 @@ class _FakeBabeClient:
         return _BabeResp(text=_BABE_HTML)
 
 
+def test_babepedia_flaresolverr_fallback(monkeypatch):
+    import bridge.app.providers.babepedia as bp
+
+    class _Blocked:  # cloudscraper gets a Cloudflare 403
+        def get(self, url, params=None):
+            r = _BabeResp()
+            r.status_code = 403
+            return r
+
+    class _Post:
+        def __init__(self, data):
+            self._data = data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._data
+
+    calls = {"n": 0}
+
+    def fake_post(url, json=None, timeout=None):
+        calls["n"] += 1
+        target = json["url"]
+        if "ajax-search" in target:  # FlareSolverr returns JSON HTML-wrapped in <pre>
+            inner = '[{"label":"Riley Reid","value":"Riley Reid"}]'
+            body = f"<html><body><pre>{inner}</pre></body></html>"
+        else:
+            body = _BABE_HTML
+        return _Post({"solution": {"status": 200, "response": body}})
+
+    monkeypatch.setattr(bp.requests, "post", fake_post)
+    prov = BabepediaProvider(client=_Blocked(), flaresolverr_url="http://fs:8191/v1")
+    r = prov.search("Riley Reid")[0]
+    assert r.name == "Riley Reid" and r.country == "US"
+    assert calls["n"] >= 2  # ajax-search + detail, both via FlareSolverr
+
+
+def test_babepedia_blocked_without_flaresolverr():
+    class _Blocked:
+        def get(self, url, params=None):
+            r = _BabeResp()
+            r.status_code = 403
+            return r
+
+    with pytest.raises(ProviderError):
+        BabepediaProvider(client=_Blocked()).search("Riley Reid")
+
+
 def test_babepedia_maps_full_bio():
     r = BabepediaProvider(client=_FakeBabeClient()).search("Riley Reid")[0]
     assert r.source == "babepedia" and r.source_entity_id == "Riley_Reid"

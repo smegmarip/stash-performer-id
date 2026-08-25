@@ -17,15 +17,28 @@ services:
       - STASH_URL=${STASH_URL:-http://host.docker.internal:9999}
       - STASH_API_KEY=${STASH_API_KEY:-}
       - PARSE_BOT_API_KEY=${PARSE_BOT_API_KEY:-}
+      # Babepedia is behind Cloudflare; FlareSolverr (sidecar) solves the challenge.
+      - FLARESOLVERR_URL=${FLARESOLVERR_URL:-http://flaresolverr:8191/v1}
       - TOP_FOLDER=${TOP_FOLDER:-}
       - MEDIA_ROOT=/data
       - DB_PATH=/cache/stash-performer-id.sqlite
+    depends_on:
+      - flaresolverr
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./cache:/cache
       # Read-only media mount for path harvest (Phase 1). Point at the Stash media root.
       - ${MEDIA_ROOT_HOST:-./data}:/data:ro
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: stash-performer-id-flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=${FLARESOLVERR_LOG_LEVEL:-info}
+    ports:
+      - "${FLARESOLVERR_PORT:-8191}:8191"
 
   viewer:
     build:

@@ -17,9 +17,10 @@ from bridge.app.providers.models import LIST_FIELDS, PROFILE_FIELDS, PerformerDa
 from bridge.app.providers.parsebot import ParseBotProvider
 from bridge.app.providers.wikidata import WikidataProvider
 
+_settings = get_settings()
 register(WikidataProvider())
-register(BabepediaProvider())
-_key = get_settings().parse_bot_api_key
+register(BabepediaProvider(flaresolverr_url=_settings.flaresolverr_url))
+_key = _settings.parse_bot_api_key
 register(ParseBotProvider(_key.get_secret_value() if _key else None))
 
 __all__ = [
