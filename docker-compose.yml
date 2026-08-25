@@ -17,13 +17,19 @@ services:
       - STASH_URL=${STASH_URL:-http://host.docker.internal:9999}
       - STASH_API_KEY=${STASH_API_KEY:-}
       - PARSE_BOT_API_KEY=${PARSE_BOT_API_KEY:-}
-      # Babepedia is behind Cloudflare; FlareSolverr (sidecar) solves the challenge.
+      # Babepedia is behind Cloudflare; FlareSolverr solves the challenge (cloudscraper is tried
+      # first, FlareSolverr only on a block). This is a container URL — Docker resolves the name on
+      # a shared network, no IP needed. If FlareSolverr already runs on the same network, just set
+      # this to its URL; if not, start the bundled sidecar with `--profile flaresolverr` (below).
       - FLARESOLVERR_URL=${FLARESOLVERR_URL:-http://flaresolverr:8191/v1}
       - TOP_FOLDER=${TOP_FOLDER:-}
       - MEDIA_ROOT=/data
       - DB_PATH=/cache/stash-performer-id.sqlite
     depends_on:
-      - flaresolverr
+      # Wait for the bundled sidecar only when its profile is active; skipped otherwise.
+      flaresolverr:
+        condition: service_started
+        required: false
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -31,9 +37,13 @@ services:
       # Read-only media mount for path harvest (Phase 1). Point at the Stash media root.
       - ${MEDIA_ROOT_HOST:-./data}:/data:ro
 
+  # Optional bundled FlareSolverr — only starts with `--profile flaresolverr` (or
+  # COMPOSE_PROFILES=flaresolverr). Skip it if a FlareSolverr already runs on this network; the
+  # default FLARESOLVERR_URL (http://flaresolverr:8191/v1) resolves to whichever one is present.
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: stash-performer-id-flaresolverr
+    profiles: ["flaresolverr"]
     restart: unless-stopped
     environment:
       - LOG_LEVEL=${FLARESOLVERR_LOG_LEVEL:-info}
