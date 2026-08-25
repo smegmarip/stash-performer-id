@@ -1,46 +1,20 @@
 /* Stash Performer ID — image tagger page.
-   Card / slidedown layout modeled on the scene tagger (.search-item cards in a
-   .tagger-container, with a Collapse for the per-image assignment). Leans on native
-   classes (filtered-list-toolbar, tagger-container, search-item, image-thumbnail,
-   pagination-index-container); only the tagger-specific bits below are custom. */
+   Card / slidedown layout modeled on the scene tagger. Reuses native classes
+   (filtered-list-toolbar, tagger-container, tagger-container-header, search-item,
+   search-item-check, collapse-button, image-thumbnail, list-operations,
+   pagination-index-container, pagination-footer-container). Only the assignment-body
+   and tag-control bits below — which have no native equivalent — are custom. */
 
 .spid-page {
   padding: 0 1rem;
 }
 
-/* Scope the native .tagger-container width for a list (rather than a single detail page). */
+/* Scope the native .tagger-container width for a list rather than a detail page. */
 .spid-page.tagger-container {
   max-width: 1400px;
 }
 
-/* --- batch CTA row (above the card list) --- */
-
-.spid-cta-row {
-  gap: 0.5rem;
-  padding: 0.5rem 0;
-}
-
-.spid-selectall {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-}
-
-/* --- image cards --- */
-
-.spid-card-list {
-  display: flex;
-  flex-direction: column;
-}
-
-/* .search-item (native) supplies the card background, radius, and padding. */
-.spid-card {
-  margin-top: 0.75rem;
-}
-
-.spid-card-check {
-  cursor: pointer;
-}
+/* --- card content layout (the header content differs from a scene card) --- */
 
 .spid-card-thumb .image-thumbnail {
   width: 72px;
@@ -73,10 +47,6 @@
 .spid-card-actions {
   margin-left: auto;
   white-space: nowrap;
-}
-
-.spid-collapse-btn {
-  color: inherit;
 }
 
 /* --- slidedown assignment body --- */

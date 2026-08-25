@@ -679,29 +679,36 @@
         label
       );
     }
-    return el(
-      "div",
-      { className: "pagination-index-container" },
+    var btnGroup =
       totalPages > 1 &&
+      el(
+        "div",
+        { className: "pagination btn-group" },
+        navBtn("«", 1, currentPage === 1),
+        navBtn("‹", currentPage - 1, currentPage === 1),
         el(
           "div",
-          { className: "pagination btn-group" },
-          navBtn("«", 1, currentPage === 1),
-          navBtn("‹", currentPage - 1, currentPage === 1),
+          { className: "page-count-container" },
           el(
             "div",
-            { className: "page-count-container" },
-            el(
-              "div",
-              { className: "btn-group" },
-              el(Button, { variant: "secondary" }, currentPage + " of " + totalPages)
-            )
-          ),
-          navBtn("›", currentPage + 1, currentPage === totalPages),
-          navBtn("»", totalPages, currentPage === totalPages)
+            { className: "btn-group" },
+            el(Button, { variant: "secondary" }, currentPage + " of " + totalPages)
+          )
         ),
-      countText
-    );
+        navBtn("›", currentPage + 1, currentPage === totalPages),
+        navBtn("»", totalPages, currentPage === totalPages)
+      );
+
+    // Bottom pager uses the native sticky footer structure (matches the scene list).
+    if (props.footer) {
+      if (totalPages <= 1) return null;
+      return el(
+        "div",
+        { className: "pagination-footer-container" },
+        el("div", { className: "pagination-footer" }, btnGroup)
+      );
+    }
+    return el("div", { className: "pagination-index-container" }, btnGroup, countText);
   }
 
   // =========================================================================
@@ -797,16 +804,17 @@
 
     return el(
       "div",
-      { className: "search-item spid-card" },
+      { className: "search-item mt-3" },
       // --- header row ---
       el(
         "div",
         { className: "spid-card-head d-flex align-items-center" },
         el(
           "label",
-          { className: "spid-card-check mb-0 mr-3" },
+          { className: "mb-0 mr-3" },
           el("input", {
             type: "checkbox",
+            className: "search-item-check",
             checked: !!props.checked,
             onChange: function () {
               props.onToggle(image.id);
@@ -859,8 +867,7 @@
             el(
               Button,
               {
-                variant: "minimal",
-                className: "spid-collapse-btn ml-1",
+                className: "minimal collapse-button ml-1",
                 title: open ? "Collapse" : "Expand",
                 onClick: function () {
                   props.onToggleOpen(image.id);
@@ -1115,15 +1122,21 @@
         return n;
       });
     }
-    function toggleAll() {
+    function selectAll() {
+      var n = new Set();
+      images.forEach(function (im) {
+        n.add(im.id);
+      });
+      setSelected(n);
+    }
+    function selectNone() {
+      setSelected(new Set());
+    }
+    function invertSelection() {
       setSelected(function (prev) {
-        var all = images.length > 0 && images.every(function (im) {
-          return prev.has(im.id);
-        });
-        if (all) return new Set();
         var n = new Set();
         images.forEach(function (im) {
-          n.add(im.id);
+          if (!prev.has(im.id)) n.add(im.id);
         });
         return n;
       });
@@ -1235,11 +1248,6 @@
     var savableCount = targetImages().filter(function (im) {
       return rowTarget(im) !== null;
     }).length;
-    var allSelected =
-      images.length > 0 &&
-      images.every(function (im) {
-        return selected.has(im.id);
-      });
 
     // --- toolbar handlers ---
     function resetToFirst(fn) {
@@ -1302,27 +1310,95 @@
             title: "Refresh",
           },
           el(api.components.Icon, { icon: FA.faSync })
+        ),
+
+        // Selection operations ("…" menu — matches the scene tagger's ListOperations).
+        el(
+          Dropdown,
+          { as: Bootstrap.ButtonGroup, className: "list-operations ml-2" },
+          el(
+            Dropdown.Toggle,
+            { variant: "secondary", id: "more-menu", title: "Selection" },
+            el(api.components.Icon, { icon: FA.faEllipsisH })
+          ),
+          el(
+            Dropdown.Menu,
+            { className: "bg-secondary text-white" },
+            el(
+              Dropdown.Item,
+              { className: "bg-secondary text-white", onClick: selectAll },
+              "Select All"
+            ),
+            el(
+              Dropdown.Item,
+              { className: "bg-secondary text-white", onClick: selectNone },
+              "Select None"
+            ),
+            el(
+              Dropdown.Item,
+              { className: "bg-secondary text-white", onClick: invertSelection },
+              "Invert Selection"
+            )
+          )
         )
       ),
 
-      // Batch CTA row (scene-tagger style): select-all on the left, Scrape/Save on the right.
-      // They act on the checked rows, or the whole page when nothing is checked.
+      el(EditFilterModal, {
+        show: filterOpen,
+        allTags: allTags,
+        filterTagIncludeIds: filterTagIncludeIds,
+        filterTagExcludeIds: filterTagExcludeIds,
+        filterTagDepth: filterTagDepth,
+        filterPath: filterPath,
+        filterPathModifier: filterPathModifier,
+        filterOrganized: filterOrganized,
+        onFilterTagIncludeChange: function (v) {
+          resetToFirst(function () {
+            tagIncS[1](v);
+          });
+        },
+        onFilterTagExcludeChange: function (v) {
+          resetToFirst(function () {
+            tagExcS[1](v);
+          });
+        },
+        onFilterTagDepthChange: tagDepthS[1],
+        onFilterPathChange: function (v) {
+          resetToFirst(function () {
+            pathS[1](v);
+          });
+        },
+        onFilterPathModifierChange: pathModS[1],
+        onFilterOrganizedChange: function (v) {
+          resetToFirst(function () {
+            orgS[1](v);
+          });
+        },
+        onClose: function () {
+          setFilterOpen(false);
+        },
+      }),
+
+      el(PaginationNav, {
+        currentPage: page,
+        totalPages: totalPages,
+        totalItems: totalCount,
+        perPage: perPage,
+        onPageChange: setPage,
+      }),
+
+      // Batch CTA row (scene-tagger's tagger-container-header): below the pagination.
+      // Scrape/Save act on the checked rows, or the whole page when nothing is checked.
       el(
         "div",
         {
           className:
-            "spid-cta-row tagger-container-header d-flex justify-content-between" +
-            " align-items-center flex-wrap",
+            "tagger-container-header d-flex justify-content-between align-items-center flex-wrap",
         },
         el(
-          "label",
-          { className: "spid-selectall mb-0" },
-          el("input", { type: "checkbox", checked: allSelected, onChange: toggleAll }),
-          el(
-            "span",
-            { className: "ml-2" },
-            selected.size ? selected.size + " selected" : "Select all"
-          )
+          "span",
+          { className: "text-muted" },
+          selected.size ? selected.size + " selected" : ""
         ),
         el(
           "div",
@@ -1378,50 +1454,6 @@
         )
       ),
 
-      el(EditFilterModal, {
-        show: filterOpen,
-        allTags: allTags,
-        filterTagIncludeIds: filterTagIncludeIds,
-        filterTagExcludeIds: filterTagExcludeIds,
-        filterTagDepth: filterTagDepth,
-        filterPath: filterPath,
-        filterPathModifier: filterPathModifier,
-        filterOrganized: filterOrganized,
-        onFilterTagIncludeChange: function (v) {
-          resetToFirst(function () {
-            tagIncS[1](v);
-          });
-        },
-        onFilterTagExcludeChange: function (v) {
-          resetToFirst(function () {
-            tagExcS[1](v);
-          });
-        },
-        onFilterTagDepthChange: tagDepthS[1],
-        onFilterPathChange: function (v) {
-          resetToFirst(function () {
-            pathS[1](v);
-          });
-        },
-        onFilterPathModifierChange: pathModS[1],
-        onFilterOrganizedChange: function (v) {
-          resetToFirst(function () {
-            orgS[1](v);
-          });
-        },
-        onClose: function () {
-          setFilterOpen(false);
-        },
-      }),
-
-      el(PaginationNav, {
-        currentPage: page,
-        totalPages: totalPages,
-        totalItems: totalCount,
-        perPage: perPage,
-        onPageChange: setPage,
-      }),
-
       loading && !data
         ? el(
             "div",
@@ -1460,6 +1492,7 @@
         totalItems: totalCount,
         perPage: perPage,
         onPageChange: setPage,
+        footer: true,
       })
     );
   }
