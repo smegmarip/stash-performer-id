@@ -32,6 +32,7 @@ class Settings(BaseSettings):
 
     # --- Enrichment ---
     parse_bot_api_key: SecretStr | None = None
+    parse_bot_budget: int = 199  # soft credit ceiling for metered parse.bot calls
 
     # --- Harvest ---
     top_folder: str | None = None

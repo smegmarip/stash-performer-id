@@ -1,0 +1,86 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "thehandbook.com API API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.parse.bot"
+    }
+  ],
+  "paths": {
+    "/scraper/a327a0b6-ab56-4a97-8b96-60ae104eed57/search_profiles": {
+      "get": {
+        "summary": "Full-text search over The Handbook's database of celebrities, influencers, and industry professionals. Returns basic profile info including name, type, social handles, reach, and profile URL. Powered by Typesense; matches against profile_name and social_handles fields. Returns a single page of results per call.",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results to return.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "description": "Search keyword such as a celebrity or influencer name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "/scraper/a327a0b6-ab56-4a97-8b96-60ae104eed57/get_profile_details": {
+    "get": {
+      "summary": "Extract detailed information and contact team details from a specific profile page. Returns the profile name, industry, and an array of team contacts (agents, managers, publicists). Some profiles may have no public contacts. Email and phone details are typically gated behind a paid subscription and will show placeholder text.",
+      "responses": {
+        "200": {
+          "description": "Successful response"
+        }
+      },
+      "parameters": [
+        {
+          "name": "url",
+          "in": "query",
+          "required": true,
+          "description": "Full URL of the profile page (e.g. https://www.thehandbook.com/celebrity/taylor-swift/).",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  },
+  "/scraper/a327a0b6-ab56-4a97-8b96-60ae104eed57/get_team_contacts": {
+    "get": {
+      "summary": "Convenience endpoint that searches for a profile by name and extracts its team contact details in one step. Internally searches for the query, selects the best celebrity match, and returns the full profile details including contacts. Some profiles may have no public contacts available.",
+      "responses": {
+        "200": {
+          "description": "Successful response"
+        }
+      },
+      "parameters": [
+        {
+          "name": "query",
+          "in": "query",
+          "required": true,
+          "description": "Name of the person to find the team for (e.g. 'Beyonce').",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  }
+}

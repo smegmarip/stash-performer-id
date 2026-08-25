@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from bridge.app.api.deps import get_db
 from bridge.app.cache.db import Database
 from bridge.app.main import app
-from bridge.app.providers import PerformerData, register
+from bridge.app.providers import ParseBotProvider, PerformerData, ProviderError, register
 from bridge.app.providers.wikidata import WikidataProvider
 
 
@@ -182,6 +182,65 @@ def test_wikidata_maps_claims():
     assert r.country == "United Kingdom"
     assert r.urls == ["https://samfox.com"]
     assert r.images == ["https://commons.wikimedia.org/wiki/Special:FilePath/Samantha_Fox.jpg"]
+
+
+# --- parse.bot (The Handbook) ---
+
+
+class _FakeParseBotClient:
+    def __init__(self):
+        self.calls = 0
+
+    def get(self, url, params=None, headers=None):
+        self.calls += 1
+        prof = {
+            "id": 63414,
+            "name": "Taylor Swift",
+            "type": "thb_celebrity",
+            "url": "https://www.thehandbook.com/celebrity/taylor-swift/",
+            "thumbnail": "https://files.thehandbook.com/x.jpg",
+            "social_handles": ["@taylorswift"],
+            "social_reach": 432530798,
+            "tags": [],
+        }
+        data = {"profiles": [prof], "total_found": 1, "page": 1}
+        return _Resp({"status": "success", "data": data})
+
+
+def test_parsebot_maps_search():
+    r = ParseBotProvider(api_key="k", client=_FakeParseBotClient()).search("Taylor Swift")[0]
+    assert r.source == "parsebot" and r.source_entity_id == "63414"
+    assert r.name == "Taylor Swift"
+    assert r.disambiguation == "Celebrity"  # type -> label
+    assert r.images == ["https://files.thehandbook.com/x.jpg"]
+    assert r.urls == ["https://www.thehandbook.com/celebrity/taylor-swift/"]
+    assert r.score == 432530798.0  # social_reach -> score
+    assert r.birthdate is None  # no bio from The Handbook
+
+
+def test_parsebot_requires_key():
+    with pytest.raises(ProviderError):
+        ParseBotProvider(api_key=None).search("x")
+
+
+def test_parsebot_records_credit_and_caches(ctx):
+    db, client, nid = ctx
+    register(ParseBotProvider(api_key="k", client=_FakeParseBotClient()))
+    r1 = client.get("/enrichment/candidates", params={"name_id": nid, "source": "parsebot"}).json()
+    assert r1["cached"] is False and len(r1["candidates"]) == 1
+    assert db.credits_spent("parsebot") == 1
+    r2 = client.get("/enrichment/candidates", params={"name_id": nid, "source": "parsebot"}).json()
+    assert r2["cached"] is True and db.credits_spent("parsebot") == 1  # cache: no new credit
+
+
+def test_parsebot_budget_guard(ctx):
+    db, client, nid = ctx
+    register(ParseBotProvider(api_key="k", client=_FakeParseBotClient()))
+    db.add_credit("parsebot", 199)  # at the soft budget
+    r = client.get("/enrichment/candidates", params={"name_id": nid, "source": "parsebot"}).json()
+    assert "budget reached" in (r["error"] or "")
+    assert db.credits_spent("parsebot") == 199  # not charged
+    assert not db.has_enrichment_search(nid, "parsebot")  # no live call made
 
 
 def test_wikidata_filters_non_humans():

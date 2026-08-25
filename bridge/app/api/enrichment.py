@@ -9,9 +9,15 @@ from pydantic import BaseModel
 
 from bridge.app.api.deps import get_db
 from bridge.app.cache.db import Database
+from bridge.app.config import get_settings
 from bridge.app.providers import ProviderError, get_provider, list_sources
 
 router = APIRouter(prefix="/enrichment")
+
+
+def _budget(source: str) -> int | None:
+    """Soft credit ceiling for a metered source (None = unlimited)."""
+    return get_settings().parse_bot_budget if source == "parsebot" else None
 
 
 @router.get("/sources")
@@ -41,6 +47,13 @@ def candidates(
         raise HTTPException(status_code=404, detail="name not found")
     term = name["name"]
 
+    # Credit guard: refuse a live metered call once the soft budget is spent (degrade to cache).
+    budget = _budget(source)
+    if provider.metered and budget is not None and db.credits_spent(source) >= budget:
+        return {"name_id": name_id, "source": source, "cached": False,
+                "error": f"credit budget reached ({db.credits_spent(source)}/{budget})",
+                "candidates": db.list_candidates(name_id, source)}
+
     error: str | None = None
     try:
         results = provider.search(term)
@@ -51,12 +64,20 @@ def candidates(
              for r in results],
         )
         count = len(results)
+        if provider.metered:
+            db.add_credit(source, 1, name_id)
     except ProviderError as e:
         error, count = str(e), 0
 
     db.record_enrichment_search(name_id, source, term, count, error)
     return {"name_id": name_id, "source": source, "cached": False, "error": error,
             "candidates": db.list_candidates(name_id, source)}
+
+
+@router.get("/credits")
+def credits(db: Database = Depends(get_db)) -> dict:
+    spent = db.credits_spent("parsebot")
+    return {"parsebot": {"spent": spent, "budget": get_settings().parse_bot_budget}}
 
 
 @router.get("/profile")
