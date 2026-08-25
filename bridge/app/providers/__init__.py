@@ -5,6 +5,7 @@ Wikidata (free) is built; parse.bot (metered) lands in a later pass. See docs/EN
 """
 
 from bridge.app.config import get_settings
+from bridge.app.providers.babepedia import BabepediaProvider
 from bridge.app.providers.base import (
     Provider,
     ProviderError,
@@ -17,6 +18,7 @@ from bridge.app.providers.parsebot import ParseBotProvider
 from bridge.app.providers.wikidata import WikidataProvider
 
 register(WikidataProvider())
+register(BabepediaProvider())
 _key = get_settings().parse_bot_api_key
 register(ParseBotProvider(_key.get_secret_value() if _key else None))
 
@@ -27,6 +29,7 @@ __all__ = [
     "PROFILE_FIELDS",
     "LIST_FIELDS",
     "WikidataProvider",
+    "BabepediaProvider",
     "ParseBotProvider",
     "get_provider",
     "list_sources",

@@ -4,7 +4,13 @@ from fastapi.testclient import TestClient
 from bridge.app.api.deps import get_db
 from bridge.app.cache.db import Database
 from bridge.app.main import app
-from bridge.app.providers import ParseBotProvider, PerformerData, ProviderError, register
+from bridge.app.providers import (
+    BabepediaProvider,
+    ParseBotProvider,
+    PerformerData,
+    ProviderError,
+    register,
+)
 from bridge.app.providers.wikidata import WikidataProvider
 
 
@@ -241,6 +247,71 @@ def test_parsebot_budget_guard(ctx):
     assert "budget reached" in (r["error"] or "")
     assert db.credits_spent("parsebot") == 199  # not charged
     assert not db.has_enrichment_search(nid, "parsebot")  # no live call made
+
+
+# --- Babepedia (HTML scrape, ported extraction) ---
+
+_BABE_HTML = """
+<html><body>
+  <h1 id="babename">Riley Reid</h1>
+  <h2 id="aka">Paige Riley - Molly</h2>
+  <div><span>Born:</span><span><a>15th of January</a><a>1991</a></span></div>
+  <div><span>Nationality</span><span><span class="fi fi-us"></span></span></div>
+  <div><span>Ethnicity</span><span><a>Caucasian</a></span></div>
+  <div><span>Eye color</span><span><a>Blue</a></span></div>
+  <div><span>Hair color</span><span><a>Brown</a></span></div>
+  <div><span>Height</span><span>163 cm</span></div>
+  <div><span>Weight</span><span>50 kg</span></div>
+  <div><span>Measurements</span><span>32-24-34</span></div>
+  <div><span>Bra/cup size</span><span>B</span></div>
+  <div><span>Boobs</span><span><a>Real</a></span></div>
+  <div><span>Tattoos</span><span>Lower back</span></div>
+  <p id="biotext">Some bio text.</p>
+  <div id="socialicons"><a href="https://twitter.com/rileyreidx3"></a>
+    <a href="/onlyfans/rileyreid"></a></div>
+  <div id="profbox2"><a class="img" href="/pics/riley.jpg"></a></div>
+</body></html>
+"""
+
+
+class _BabeResp:
+    def __init__(self, text=None, data=None):
+        self.text = text
+        self._data = data
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._data
+
+
+class _FakeBabeClient:
+    def get(self, url, params=None):
+        if "ajax-search" in url:
+            return _BabeResp(data=[{"label": "Riley Reid", "value": "Riley Reid"}])
+        return _BabeResp(text=_BABE_HTML)
+
+
+def test_babepedia_maps_full_bio():
+    r = BabepediaProvider(client=_FakeBabeClient()).search("Riley Reid")[0]
+    assert r.source == "babepedia" and r.source_entity_id == "Riley_Reid"
+    assert r.name == "Riley Reid"
+    assert r.aliases == ["Paige Riley", "Molly"]
+    assert r.gender == "Female"
+    assert r.birthdate == "1991-01-15"
+    assert r.country == "US"
+    assert r.ethnicity == "Caucasian"
+    assert r.eye_color == "Blue"
+    assert r.hair_color == "Brunette"  # Brown -> Brunette
+    assert r.height == "163" and r.weight == "50"
+    assert r.measurements == "B-24-34"  # cup + waist + hip
+    assert r.fake_tits == "Natural"  # "Real" -> Natural
+    assert r.tattoos == "Lower back"
+    assert r.details == "Some bio text."
+    assert "https://twitter.com/rileyreidx3" in r.urls
+    assert "https://onlyfans.com/rileyreid" in r.urls  # proxy-mapped
+    assert r.images == ["https://www.babepedia.com/pics/riley.jpg"]
 
 
 def test_wikidata_filters_non_humans():
