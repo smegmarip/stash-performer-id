@@ -418,6 +418,46 @@ class Database:
         self.conn.commit()
         return len(targets)
 
+    # --- scrape surface (Step 2: image -> performer, via the metadata provider) ---
+
+    def lookup_active_name_for_image(
+        self,
+        stash_id: str | None = None,
+        paths: list[str] | None = None,
+    ) -> dict | None:
+        """Resolve an image (by Stash image id, else by any of its file paths) to its active
+        name, for the `imageByFragment` scraper. Returns {name_id, name, disambiguation} or None.
+
+        The image id is the reliable key (an image file-asset's stash_id IS the Stash image id);
+        paths are the fallback for assets harvested before an id was known.
+        """
+        asset_id = None
+        if stash_id:
+            row = self.conn.execute(
+                "SELECT id FROM asset WHERE stash_entity_type = 'image' AND stash_id = ?",
+                (stash_id,),
+            ).fetchone()
+            if row:
+                asset_id = row["id"]
+        if asset_id is None and paths:
+            placeholders = ",".join("?" * len(paths))
+            row = self.conn.execute(
+                f"SELECT id FROM asset WHERE resource_type = 'file' AND path IN ({placeholders})"
+                " LIMIT 1",
+                paths,
+            ).fetchone()
+            if row:
+                asset_id = row["id"]
+        if asset_id is None:
+            return None
+        active = self.conn.execute(
+            """SELECT nr.name_id, n.name, n.disambiguation FROM name_relationship nr
+               JOIN names n ON n.id = nr.name_id
+               WHERE nr.asset_id = ? AND nr.active = 1""",
+            (asset_id,),
+        ).fetchone()
+        return dict(active) if active else None
+
     def add_direct_name(self, name: str, disambiguation: str = "") -> dict:
         """Direct-input name (marked valid)."""
         self.conn.execute(
