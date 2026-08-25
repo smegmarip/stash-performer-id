@@ -1,9 +1,138 @@
-.spid-nav-label {
-  font-weight: 600;
-  font-size: 0.85rem;
-  letter-spacing: 0.02em;
+/* Stash Performer ID — image tagger page.
+   Styling leans on Stash's native list classes (filtered-list-toolbar, table-list,
+   image-thumbnail, ellips-data, pagination-index-container). Only the tagger-specific
+   bits below are custom. */
+
+.spid-page {
+  padding: 0 1rem;
 }
 
-.stash-performer-id-page {
-  max-width: 1200px;
+/* Vertical divider between the view controls and the batch actions in the toolbar. */
+.spid-toolbar-sep {
+  display: inline-block;
+  width: 1px;
+  height: 1.6rem;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.select-col {
+  width: 1px;
+  text-align: center;
+}
+
+/* Match the native scene-table viewport sizing (sticky header + scroll come from .table-list). */
+.table-list.spid-image-table {
+  max-height: calc(100dvh - 210px);
+}
+
+.spid-image-table td {
+  vertical-align: middle;
+}
+
+.spid-thumb-head,
+.spid-thumb-cell {
+  width: 74px;
+}
+
+/* Fixed square box + cover: images have varied aspect ratios, so a fixed width
+   avoids the thin-strip look that height-only sizing gives portrait images. */
+.spid-image-table .image-thumbnail {
+  width: 58px;
+  height: 58px;
+  object-fit: cover;
+  border-radius: 4px;
+  display: block;
+}
+
+.spid-image-path {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  word-break: break-all;
+}
+
+.spid-perf-badge {
+  margin-right: 0.25rem;
+}
+
+/* --- assignment cell: Scrape -> suggestion -> PerformerSelect -> Save --- */
+
+.spid-assign-cell {
+  min-width: 340px;
+}
+
+.spid-perf-select {
+  display: inline-block;
+  min-width: 220px;
+  vertical-align: middle;
+}
+
+.spid-suggestion {
+  white-space: nowrap;
+}
+
+.spid-status {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* --- tag include/exclude control (filter modal; not a native-exposed widget) --- */
+
+.spid-tag-pills {
+  margin-bottom: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.spid-tag-included {
+  background-color: #2f6f43 !important;
+}
+
+.spid-tag-excluded {
+  background-color: #8a2b2b !important;
+}
+
+.spid-tag-control {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.spid-tag-control-search {
+  position: sticky;
+  top: 0;
+  padding: 0.4rem;
+  background: #30404d;
+  z-index: 1;
+}
+
+.spid-tag-row {
+  display: flex;
+  align-items: center;
+  padding: 0.1rem 0.4rem;
+}
+
+.spid-tag-name {
+  flex: 1;
+  padding: 0 0.5rem;
+}
+
+.spid-btn-include.active {
+  color: #4caf50;
+}
+
+.spid-btn-exclude.active {
+  color: #e57373;
+}
+
+.spid-modifier-options {
+  margin-bottom: 0.5rem;
+}
+
+.spid-filter-header {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  cursor: pointer;
 }
