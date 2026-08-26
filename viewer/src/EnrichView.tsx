@@ -93,7 +93,7 @@ export default function EnrichView() {
       setRowBatch((s) => ({ ...s, [id]: { phase: "searching" } }));
       try {
         if (kind === "search") {
-          const r = await api.enrichCandidates(id, source); // cache-first; persists on a live hit
+          const r = await api.enrichSearch(id, source); // cache-first; persists on a live hit
           const count = r.candidates.length;
           if (count) found++;
           setRowBatch((s) => ({ ...s, [id]: { phase: "done", count, error: r.error } }));

@@ -93,23 +93,23 @@ def test_candidates_cache_first(ctx):
     fake = FakeProvider()
     register(fake)
 
-    r1 = client.get("/enrichment/candidates", params={"name_id": nid, "source": "faketest"}).json()
+    r1 = client.get("/enrichment/search", params={"name_id": nid, "source": "faketest"}).json()
     assert r1["cached"] is False and len(r1["candidates"]) == 1
     assert r1["candidates"][0]["data"]["country"] == "UK"
 
-    r2 = client.get("/enrichment/candidates", params={"name_id": nid, "source": "faketest"}).json()
+    r2 = client.get("/enrichment/search", params={"name_id": nid, "source": "faketest"}).json()
     assert r2["cached"] is True
     assert fake.calls == 1  # second call served from cache, provider not hit again
 
     r3 = client.get(
-        "/enrichment/candidates", params={"name_id": nid, "source": "faketest", "refresh": True}
+        "/enrichment/search", params={"name_id": nid, "source": "faketest", "refresh": True}
     ).json()
     assert r3["cached"] is False and fake.calls == 2
 
 
 def test_unknown_source_400(ctx):
     _db, client, nid = ctx
-    r = client.get("/enrichment/candidates", params={"name_id": nid, "source": "nope"})
+    r = client.get("/enrichment/search", params={"name_id": nid, "source": "nope"})
     assert r.status_code == 400
 
 
@@ -270,10 +270,10 @@ def test_parsebot_requires_key():
 def test_parsebot_records_credit_and_caches(ctx):
     db, client, nid = ctx
     register(ParseBotProvider(api_key="k", client=_FakeParseBotClient()))
-    r1 = client.get("/enrichment/candidates", params={"name_id": nid, "source": "parsebot"}).json()
+    r1 = client.get("/enrichment/search", params={"name_id": nid, "source": "parsebot"}).json()
     assert r1["cached"] is False and len(r1["candidates"]) == 1
     assert db.credits_spent("parsebot") == 1
-    r2 = client.get("/enrichment/candidates", params={"name_id": nid, "source": "parsebot"}).json()
+    r2 = client.get("/enrichment/search", params={"name_id": nid, "source": "parsebot"}).json()
     assert r2["cached"] is True and db.credits_spent("parsebot") == 1  # cache: no new credit
 
 
@@ -281,7 +281,7 @@ def test_parsebot_budget_guard(ctx):
     db, client, nid = ctx
     register(ParseBotProvider(api_key="k", client=_FakeParseBotClient()))
     db.add_credit("parsebot", 199)  # at the soft budget
-    r = client.get("/enrichment/candidates", params={"name_id": nid, "source": "parsebot"}).json()
+    r = client.get("/enrichment/search", params={"name_id": nid, "source": "parsebot"}).json()
     assert "budget reached" in (r["error"] or "")
     assert db.credits_spent("parsebot") == 199  # not charged
     assert not db.has_enrichment_search(nid, "parsebot")  # no live call made

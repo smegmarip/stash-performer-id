@@ -207,7 +207,7 @@ export function EnrichModal({
       setLoading(true);
       setError(null);
       try {
-        const r = await api.enrichCandidates(nameId, source, refresh);
+        const r = await api.enrichSearch(nameId, source, refresh);
         setCandidates(r.candidates);
         setError(r.error);
       } catch (e) {

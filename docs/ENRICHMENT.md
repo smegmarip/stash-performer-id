@@ -161,9 +161,10 @@ serialized `PerformerData`.
 ## 4. Service API
 
 - `GET  /enrichment/sources` → `[{id, label, metered}]`
-- `GET  /enrichment/candidates?name_id=&source=` → cache-first: if `enrichment_search` has a row,
-  return cached `enrichment_candidate`s; else call `Provider.search`, persist search+candidates,
-  return them. (`?refresh=1` forces a live call.)
+- `GET  /enrichment/search?name_id=&source=` → the search interface for one (name, source).
+  Cache-first: if `enrichment_search` has a row, return cached `enrichment_candidate`s; else call
+  `Provider.search`, persist search+candidates, return them — one uniform response either way.
+  (`?refresh=1` forces a live call.)
 - `GET  /enrichment/profile?name_id=` → the resolved `enrichment_profile` (or null)
 - `POST /enrichment/profile` `{name_id, fields:{field: {value, source}}}` → apply the ✓ fields
   onto the profile (override), record `field_sources`, return the updated profile

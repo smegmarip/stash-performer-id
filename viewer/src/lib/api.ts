@@ -162,10 +162,12 @@ export const api = {
 
   // --- Enrichment ---
   enrichSources: () => req<{ sources: EnrichSource[] }>("/enrichment/sources"),
-  enrichCandidates: (nameId: number, source: string, refresh = false) => {
+  // The search interface for one (name, source): cache-first on the server, uniform response
+  // whether the data is cached or freshly fetched. `refresh` forces a live call.
+  enrichSearch: (nameId: number, source: string, refresh = false) => {
     const p = new URLSearchParams({ name_id: String(nameId), source });
     if (refresh) p.set("refresh", "true");
-    return req<CandidatesResp>(`/enrichment/candidates?${p.toString()}`);
+    return req<CandidatesResp>(`/enrichment/search?${p.toString()}`);
   },
   enrichProfile: (nameId: number) =>
     req<{ profile: EnrichProfile }>(`/enrichment/profile?name_id=${nameId}`),

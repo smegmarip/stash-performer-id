@@ -22,7 +22,7 @@ def _budget(source: str) -> int | None:
 
 def _run_search(db: Database, name_id: int, source: str, refresh: bool = False) -> dict:
     """Cache-first search for one (name, source): cached candidates if already searched, else a
-    live provider call (persisted, credit-guarded). Shared by /candidates and the batch ops."""
+    live provider call (persisted, credit-guarded). Shared by /search and the batch ops."""
     provider = get_provider(source)
     if provider is None:
         raise HTTPException(status_code=400, detail=f"unknown source '{source}'")
@@ -68,15 +68,16 @@ def sources() -> dict:
     return {"sources": list_sources()}
 
 
-@router.get("/candidates")
-def candidates(
+@router.get("/search")
+def search(
     name_id: int = Query(...),
     source: str = Query(...),
     refresh: bool = False,
     db: Database = Depends(get_db),
 ) -> dict:
-    """Cache-first: return cached candidates when the (name, source) search has run, else call the
-    provider, persist the results, and return them. `refresh=1` forces a live call."""
+    """The search interface for one (name, source). Cache-first: returns cached candidates when the
+    search has already run, else calls the provider and persists — one uniform response either way.
+    Callers don't care whether the data came from the DB or live. `refresh=1` forces a live call."""
     return _run_search(db, name_id, source, refresh)
 
 
