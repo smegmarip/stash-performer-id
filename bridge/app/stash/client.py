@@ -2,6 +2,8 @@
 run without auth). Used by the harvest to enumerate galleries/images.
 """
 
+import json
+
 import httpx
 
 
@@ -22,7 +24,11 @@ class StashClient:
             self.endpoint, json={"query": query, "variables": variables or {}}
         )
         resp.raise_for_status()
-        data = resp.json()
+        # Stash echoes on-disk file paths verbatim, so a Latin-1-named file (e.g. a 0xC9 "É"
+        # byte) makes the JSON body invalid UTF-8 and strict resp.json() raises
+        # UnicodeDecodeError, aborting the whole harvest. Decode leniently — the offending
+        # byte becomes U+FFFD in that one path; everything else harvests normally.
+        data = json.loads(resp.content.decode("utf-8", errors="replace"))
         if data.get("errors"):
             raise StashError(str(data["errors"]))
         return data["data"]
