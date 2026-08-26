@@ -314,15 +314,16 @@ export default function EnrichView() {
                             error
                           </span>
                         ) : rb?.phase === "done" && rb.candidates && rb.candidates.length ? (
-                          // Candidate matches inline, like a Stash tagger card. Click one to resolve.
-                          <div className="flex flex-wrap gap-1.5">
+                          // Candidate matches inline, like a Stash tagger card: a grid of results
+                          // with a visible thumbnail + name/disambiguation. Click one to resolve.
+                          <div className="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-1">
                             {rb.candidates.map((c) => {
                               const img = (c.data.images ?? [])[0] as string | undefined;
                               return (
                                 <button
                                   key={`${c.source}-${c.source_entity_id}`}
                                   type="button"
-                                  className="border-base-content/10 bg-base-200 hover:bg-base-300 inline-flex max-w-56 items-center gap-1.5 rounded-full border py-1 pe-2.5 ps-1 text-xs"
+                                  className="hover:bg-base-200 flex items-center gap-2 rounded-lg p-1 text-start"
                                   onClick={() =>
                                     setModal({ nameId: row.id, name: row.name, candidate: c })
                                   }
@@ -332,18 +333,24 @@ export default function EnrichView() {
                                     <img
                                       src={img}
                                       alt=""
-                                      className="size-5 shrink-0 rounded-full object-cover"
+                                      className="size-12 shrink-0 rounded object-cover"
                                       loading="lazy"
                                     />
                                   ) : (
-                                    <span className="icon-[tabler--user] text-base-content/40 size-5 shrink-0" />
-                                  )}
-                                  <span className="truncate">{c.data.name}</span>
-                                  {c.data.disambiguation != null && (
-                                    <span className="text-base-content/50 shrink-0">
-                                      ({String(c.data.disambiguation)})
+                                    <span className="bg-base-300 flex size-12 shrink-0 items-center justify-center rounded">
+                                      <span className="icon-[tabler--user] text-base-content/40 size-6" />
                                     </span>
                                   )}
+                                  <span className="min-w-0">
+                                    <span className="block truncate text-sm font-medium">
+                                      {c.data.name}
+                                    </span>
+                                    {c.data.disambiguation != null && (
+                                      <span className="text-base-content/50 block truncate text-xs">
+                                        {String(c.data.disambiguation)}
+                                      </span>
+                                    )}
+                                  </span>
                                 </button>
                               );
                             })}
