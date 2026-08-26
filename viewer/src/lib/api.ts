@@ -173,6 +173,12 @@ export const api = {
     req<{ profiles: Record<number, { fields: number; sources: string[] }> }>(
       `/enrichment/profiles?name_ids=${nameIds.join(",")}`,
     ),
+  // Cached candidate status per name for a source (which were searched, how many candidates),
+  // so the table reflects the DB cache on load without any live provider call.
+  enrichSearchStatus: (nameIds: number[], source: string) =>
+    req<{ source: string; status: Record<number, { count: number; error: string | null }> }>(
+      `/enrichment/search-status?name_ids=${nameIds.join(",")}&source=${encodeURIComponent(source)}`,
+    ),
   applyProfile: (nameId: number, fields: Record<string, FieldApply>) =>
     req<{ profile: EnrichProfile }>("/enrichment/profile", {
       method: "POST",

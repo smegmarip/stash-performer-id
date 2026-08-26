@@ -80,6 +80,16 @@ def candidates(
     return _run_search(db, name_id, source, refresh)
 
 
+@router.get("/search-status")
+def search_status(
+    name_ids: str = Query(...), source: str = Query(...), db: Database = Depends(get_db)
+) -> dict:
+    """Bulk cache status for a page of names against a source: which have been searched and how
+    many candidates they hold — so the UI reflects the cache on load without any live call."""
+    ids = [int(t) for t in name_ids.split(",") if t.strip()]
+    return {"source": source, "status": db.search_status(ids, source)}
+
+
 class SearchBatch(BaseModel):
     name_ids: list[int]
     source: str

@@ -107,6 +107,22 @@ def test_candidates_cache_first(ctx):
     assert r3["cached"] is False and fake.calls == 2
 
 
+def test_search_status_reflects_cache(ctx):
+    _db, client, nid = ctx
+    register(FakeProvider())
+    # Unsearched: not present in the bulk status.
+    r0 = client.get(
+        "/enrichment/search-status", params={"name_ids": str(nid), "source": "faketest"}
+    ).json()
+    assert str(nid) not in r0["status"] and nid not in r0["status"]
+    # After a search, the cache reports the candidate count without any live call.
+    client.get("/enrichment/candidates", params={"name_id": nid, "source": "faketest"})
+    r1 = client.get(
+        "/enrichment/search-status", params={"name_ids": str(nid), "source": "faketest"}
+    ).json()
+    assert r1["status"][str(nid)] == {"count": 1, "error": None}
+
+
 def test_unknown_source_400(ctx):
     _db, client, nid = ctx
     r = client.get("/enrichment/candidates", params={"name_id": nid, "source": "nope"})
