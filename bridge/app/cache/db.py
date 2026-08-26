@@ -533,19 +533,6 @@ class Database:
             is not None
         )
 
-    def search_status(self, name_ids: list[int], source: str) -> dict[int, dict]:
-        """Bulk cache status for a page of names against a source: {name_id: {count, error}} for
-        those already searched. Lets the UI show cached candidates without a live call per name."""
-        if not name_ids:
-            return {}
-        placeholders = ",".join("?" * len(name_ids))
-        rows = self.conn.execute(
-            f"SELECT name_id, result_count, error FROM enrichment_search"
-            f" WHERE source = ? AND name_id IN ({placeholders})",
-            [source, *name_ids],
-        ).fetchall()
-        return {r["name_id"]: {"count": r["result_count"], "error": r["error"]} for r in rows}
-
     def record_enrichment_search(
         self, name_id: int, source: str, query: str, result_count: int, error: str | None = None
     ) -> None:

@@ -60,26 +60,11 @@ export default function EnrichView() {
       setSelected(new Set());
       const ids = page.names.map((n) => n.id);
       setStatus(ids.length ? (await api.enrichProfileStatus(ids)).profiles : {});
-      // Reflect the DB cache for the selected source on load — cached candidates show up as
-      // "N candidates" without any live call, so the batch just surfaces what's already stored.
-      if (ids.length && source) {
-        const { status: cached } = await api.enrichSearchStatus(ids, source);
-        setRowBatch(
-          Object.fromEntries(
-            Object.entries(cached).map(([id, s]) => [
-              Number(id),
-              { phase: "done", count: s.count, error: s.error },
-            ]),
-          ),
-        );
-      } else {
-        setRowBatch({});
-      }
       setCredits(metered ? (await api.enrichCredits())["parsebot"] ?? null : null);
     } catch (e) {
       setError(String(e));
     }
-  }, [q, offset, metered, source]);
+  }, [q, offset, metered]);
 
   useEffect(() => {
     void refresh();
@@ -97,6 +82,7 @@ export default function EnrichView() {
     setBusy(true);
     setError(null);
     setNote(null);
+    setRowBatch({});
     stopRef.current = false;
     setProgress({ done: 0, total: ids.length });
 
@@ -305,14 +291,12 @@ export default function EnrichView() {
                             <span className="loading loading-spinner loading-xs" />
                             Searching…
                           </span>
-                        ) : st ? (
-                          <span className="badge badge-soft badge-success badge-sm" title={st.sources.join(", ")}>
-                            {st.fields} fields · {st.sources.join(", ")}
-                          </span>
                         ) : rb?.phase === "done" && rb.error ? (
                           <span className="badge badge-soft badge-error badge-sm" title={rb.error}>
                             error
                           </span>
+                        ) : rb?.phase === "done" && rb.count === 0 ? (
+                          <span className="badge badge-soft badge-sm">no match</span>
                         ) : rb?.phase === "done" && rb.count ? (
                           <button
                             type="button"
@@ -322,8 +306,10 @@ export default function EnrichView() {
                           >
                             {rb.count} candidate{rb.count === 1 ? "" : "s"}
                           </button>
-                        ) : rb?.phase === "done" && rb.count === 0 ? (
-                          <span className="badge badge-soft badge-sm">no match</span>
+                        ) : st ? (
+                          <span className="badge badge-soft badge-success badge-sm" title={st.sources.join(", ")}>
+                            {st.fields} fields · {st.sources.join(", ")}
+                          </span>
                         ) : (
                           <span className="text-base-content/40 text-sm">—</span>
                         )}
