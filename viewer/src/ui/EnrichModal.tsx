@@ -10,6 +10,26 @@ function fieldDisplay(value: unknown): string {
   return Array.isArray(value) ? value.join(", ") : String(value);
 }
 
+// `details` is a full bio (can be thousands of chars) — clamp it with a show-more toggle.
+function DetailsCell({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = text.length > 280;
+  return (
+    <div>
+      <p className={`whitespace-pre-wrap ${expanded ? "" : "line-clamp-4"}`}>{text}</p>
+      {long && (
+        <button
+          type="button"
+          className="link link-primary text-xs"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // The candidate's populated fields (superset filtered to non-empty) — only these are shown.
 function populated(c: Candidate): { field: string; value: unknown }[] {
   const out: { field: string; value: unknown }[] = [];
@@ -71,6 +91,9 @@ function ResolvePane({
           ))}
         </ul>
       );
+    }
+    if (field === "details") {
+      return <DetailsCell text={String(value)} />;
     }
     return fieldDisplay(value);
   };

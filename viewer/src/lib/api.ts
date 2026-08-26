@@ -81,6 +81,7 @@ type NameQuery = {
   order?: string;
   limit?: number;
   offset?: number;
+  enriched?: string; // matched | unmatched (has a resolved enrichment profile, or not)
 };
 type AssetQuery = {
   type: Scope;
@@ -124,6 +125,7 @@ export const api = {
     });
     if (o.status) p.set("status", o.status);
     if (o.q) p.set("q", o.q);
+    if (o.enriched) p.set("enriched", o.enriched);
     return req<NamePage>(`/names?${p.toString()}`);
   },
   updateName: (id: number, patch: NamePatch) =>
@@ -172,9 +174,9 @@ export const api = {
   enrichProfile: (nameId: number) =>
     req<{ profile: EnrichProfile }>(`/enrichment/profile?name_id=${nameId}`),
   enrichProfileStatus: (nameIds: number[]) =>
-    req<{ profiles: Record<number, { fields: number; sources: string[] }> }>(
-      `/enrichment/profiles?name_ids=${nameIds.join(",")}`,
-    ),
+    req<{
+      profiles: Record<number, { fields: number; sources: string[]; image: string | null }>;
+    }>(`/enrichment/profiles?name_ids=${nameIds.join(",")}`),
   applyProfile: (nameId: number, fields: Record<string, FieldApply>) =>
     req<{ profile: EnrichProfile }>("/enrichment/profile", {
       method: "POST",

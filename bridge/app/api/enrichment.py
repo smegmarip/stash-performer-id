@@ -161,7 +161,12 @@ def profiles(name_ids: str = Query(...), db: Database = Depends(get_db)) -> dict
         p = db.get_enrichment_profile(nid)
         if p:
             fs = p["field_sources"]
-            out[nid] = {"fields": len(fs), "sources": sorted(set(fs.values()))}
+            images = p.get("images") or []
+            out[nid] = {
+                "fields": len(fs),
+                "sources": sorted(set(fs.values())),
+                "image": images[0] if images else None,
+            }
     return {"profiles": out}
 
 

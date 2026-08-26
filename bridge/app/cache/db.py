@@ -262,7 +262,9 @@ class Database:
     _NAME_SORT = {"name": "name", "edited": "edited_at", "id": "id"}
 
     @staticmethod
-    def _name_where(status: str | None, q: str | None) -> tuple[str, list]:
+    def _name_where(
+        status: str | None, q: str | None, enriched: str | None = None
+    ) -> tuple[str, list]:
         where: list[str] = []
         params: list = []
         if status == "valid":
@@ -272,10 +274,18 @@ class Database:
         if q:
             where.append("name LIKE ?")
             params.append(f"%{q}%")
+        # enriched: matched = has a resolved enrichment_profile; unmatched = none yet.
+        has_profile = "EXISTS (SELECT 1 FROM enrichment_profile p WHERE p.name_id = names.id)"
+        if enriched == "matched":
+            where.append(has_profile)
+        elif enriched == "unmatched":
+            where.append("NOT " + has_profile)
         return ("WHERE " + " AND ".join(where)) if where else "", params
 
-    def count_names(self, status: str | None = None, q: str | None = None) -> int:
-        where, params = self._name_where(status, q)
+    def count_names(
+        self, status: str | None = None, q: str | None = None, enriched: str | None = None
+    ) -> int:
+        where, params = self._name_where(status, q, enriched)
         return self.conn.execute(f"SELECT COUNT(*) n FROM names {where}", params).fetchone()["n"]
 
     def list_names(
@@ -286,8 +296,9 @@ class Database:
         order: str = "asc",
         limit: int = 100,
         offset: int = 0,
+        enriched: str | None = None,
     ) -> list[dict]:
-        where, params = self._name_where(status, q)
+        where, params = self._name_where(status, q, enriched)
         sort_col = self._NAME_SORT.get(sort, "name")
         order_sql = "DESC" if order.lower() == "desc" else "ASC"
         rows = self.conn.execute(

@@ -22,13 +22,16 @@ def list_names(
     order: str = "asc",
     limit: int = 100,
     offset: int = 0,
+    enriched: str | None = None,
     db: Database = Depends(get_db),
 ) -> dict:
-    """status ∈ {valid, invalid}; omit for all. Names are valid by default."""
+    """status ∈ {valid, invalid}; omit for all. Names are valid by default.
+    enriched ∈ {matched, unmatched}; omit for all — matched = has a resolved enrichment profile."""
     return {
-        "total": db.count_names(status=status, q=q),
+        "total": db.count_names(status=status, q=q, enriched=enriched),
         "names": db.list_names(
-            status=status, q=q, sort=sort, order=order, limit=limit, offset=offset
+            status=status, q=q, sort=sort, order=order, limit=limit, offset=offset,
+            enriched=enriched,
         ),
     }
 

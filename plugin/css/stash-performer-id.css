@@ -63,8 +63,55 @@
   min-width: 240px;
 }
 
-.spid-suggestion {
-  white-space: nowrap;
+/* Assignment row: bounded thumbnail on the left; a column to its right with the name caption
+   above the select/create/save controls (so long names get full width, not the thumb's). */
+.spid-assign {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 1rem;
+}
+
+.spid-assign-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.spid-assign-controls {
+  display: flex;
+  align-items: center;
+}
+
+.spid-suggest-thumb {
+  width: 96px;
+  height: 96px;
+  flex: 0 0 96px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.spid-suggest-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.spid-suggest-name {
+  font-weight: 600;
+}
+
+.spid-suggest-label {
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+.spid-suggest-disamb {
+  font-weight: 400;
+  opacity: 0.6;
 }
 
 .spid-status {

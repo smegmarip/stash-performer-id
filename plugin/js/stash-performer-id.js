@@ -1038,17 +1038,30 @@
     var open = !!st.open;
 
     // --- assignment body (shown in the slidedown once scraped) ---
+    // Scene-tagger layout: the provider suggestion is a thumbnail + name caption on the left;
+    // the select / create / save controls float to the right.
     function renderBody() {
-      var body = [
-        el(
-          "span",
-          { key: "sg", className: "spid-suggestion mr-3" },
-          "Suggested: ",
-          el("b", null, scraped.name || "(no match)")
-        ),
-      ];
+      var providerThumb = scraped.images && scraped.images[0];
+      // Bounded thumbnail on the left; to its right a column with the name caption on top and the
+      // select/create/save controls below (so a long name isn't clamped to the thumbnail width).
+      var thumbEl = el(
+        "div",
+        { key: "th", className: "spid-suggest-thumb" },
+        providerThumb ? el("img", { src: providerThumb, loading: "lazy", alt: "" }) : null
+      );
+      var nameCap = el(
+        "div",
+        { key: "nm", className: "spid-suggest-name" },
+        el("span", { className: "spid-suggest-label" }, "Suggested: "),
+        scraped.name || "(no match)",
+        scraped.disambiguation
+          ? el("span", { className: "spid-suggest-disamb" }, " (" + scraped.disambiguation + ")")
+          : null
+      );
+
+      var controls = [];
       if (PerformerSelect) {
-        body.push(
+        controls.push(
           el(
             "div",
             { key: "ps", className: "spid-perf-select mr-2" },
@@ -1064,7 +1077,7 @@
         );
       }
       if (!selected && scraped.name) {
-        body.push(
+        controls.push(
           el(
             Button,
             {
@@ -1078,11 +1091,11 @@
                 props.onOpenCreate(image);
               },
             },
-            'Create "' + scraped.name + '"…'
+            "Create…"
           )
         );
       }
-      body.push(
+      controls.push(
         el(
           Button,
           {
@@ -1098,7 +1111,7 @@
         )
       );
       if (st.status === "error") {
-        body.push(
+        controls.push(
           el(
             "span",
             { key: "er", className: "spid-status text-danger ml-2", title: st.message },
@@ -1106,7 +1119,21 @@
           )
         );
       }
-      return body;
+      return el(
+        "div",
+        { className: "spid-assign" },
+        thumbEl,
+        el(
+          "div",
+          { className: "spid-assign-main" },
+          nameCap,
+          el(
+            "div",
+            { key: "ctl", className: "spid-assign-controls d-flex align-items-center" },
+            controls
+          )
+        )
+      );
     }
 
     return el(

@@ -142,6 +142,32 @@ def test_profiles_status(ctx):
     assert set(r[str(nid)]["sources"]) == {"wikidata", "babepedia"}
 
 
+def test_profile_status_includes_image(ctx):
+    db, client, nid = ctx
+    db.apply_enrichment_profile(
+        nid,
+        {
+            "gender": {"value": "Female", "source": "wikidata"},
+            "images": {"value": ["http://img/1.jpg", "http://img/2.jpg"], "source": "babepedia"},
+        },
+    )
+    r = client.get("/enrichment/profiles", params={"name_ids": str(nid)}).json()["profiles"]
+    assert r[str(nid)]["image"] == "http://img/1.jpg"  # first image
+    assert set(r[str(nid)]["sources"]) == {"wikidata", "babepedia"}  # all contributing sources
+
+
+def test_names_matched_unmatched_filter(ctx):
+    db, client, nid = ctx
+    nid2 = db.add_direct_name("Marilyn Monroe")["id"]
+    db.apply_enrichment_profile(nid2, {"gender": {"value": "Female", "source": "wikidata"}})
+    matched = client.get("/names", params={"status": "valid", "enriched": "matched"}).json()
+    unmatched = client.get("/names", params={"status": "valid", "enriched": "unmatched"}).json()
+    assert {n["id"] for n in matched["names"]} == {nid2} and matched["total"] == 1
+    assert nid in {n["id"] for n in unmatched["names"]} and nid2 not in {
+        n["id"] for n in unmatched["names"]
+    }
+
+
 def test_search_batch_populates(ctx):
     db, client, nid = ctx
     nid2 = db.add_direct_name("Marilyn Monroe")["id"]

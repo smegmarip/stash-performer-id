@@ -4,14 +4,17 @@ export function Pager({
   page,
   busy,
   onOffset,
+  alwaysShow = false,
 }: {
   total: number;
   offset: number;
   page: number;
   busy: boolean;
   onOffset: (offset: number) => void;
+  // Show the range label (with disabled arrows) even when everything fits on one page.
+  alwaysShow?: boolean;
 }) {
-  if (total <= page) return null;
+  if (total === 0 || (total <= page && !alwaysShow)) return null;
   return (
     <div className="text-base-content/60 flex items-center justify-center gap-3 py-3 text-sm">
       <button
