@@ -58,7 +58,11 @@ def _run_search(db: Database, name_id: int, source: str, refresh: bool = False) 
     except ProviderError as e:
         error, count = str(e), 0
 
-    db.record_enrichment_search(name_id, source, term, count, error)
+    # Only cache a successful, non-empty search. Errors (e.g. a 429) and empty results are
+    # transient/retryable — recording them would mark the name "searched" and serve the failure
+    # from cache forever. Leaving no row keeps it a cache-miss so the next search retries live.
+    if error is None and count > 0:
+        db.record_enrichment_search(name_id, source, term, count, error)
     return {"name_id": name_id, "source": source, "cached": False, "error": error,
             "candidates": db.list_candidates(name_id, source)}
 

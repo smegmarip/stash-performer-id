@@ -107,6 +107,53 @@ def test_candidates_cache_first(ctx):
     assert r3["cached"] is False and fake.calls == 2
 
 
+class _ErrorProvider:
+    id = "errtest"
+    label = "Err"
+    metered = False
+
+    def __init__(self):
+        self.calls = 0
+
+    def search(self, term):
+        self.calls += 1
+        raise ProviderError("boom")
+
+
+class _EmptyProvider:
+    id = "emptytest"
+    label = "Empty"
+    metered = False
+
+    def __init__(self):
+        self.calls = 0
+
+    def search(self, term):
+        self.calls += 1
+        return []
+
+
+def test_errors_not_cached(ctx):
+    db, client, nid = ctx
+    prov = _ErrorProvider()
+    register(prov)
+    r = client.get("/enrichment/search", params={"name_id": nid, "source": "errtest"}).json()
+    assert r["error"] and r["candidates"] == []
+    assert db.has_enrichment_search(nid, "errtest") is False  # not cached
+    client.get("/enrichment/search", params={"name_id": nid, "source": "errtest"})
+    assert prov.calls == 2  # retried live, not served from cache
+
+
+def test_empty_results_not_cached(ctx):
+    db, client, nid = ctx
+    prov = _EmptyProvider()
+    register(prov)
+    client.get("/enrichment/search", params={"name_id": nid, "source": "emptytest"})
+    assert db.has_enrichment_search(nid, "emptytest") is False  # empty not cached
+    client.get("/enrichment/search", params={"name_id": nid, "source": "emptytest"})
+    assert prov.calls == 2  # searched again
+
+
 def test_unknown_source_400(ctx):
     _db, client, nid = ctx
     r = client.get("/enrichment/search", params={"name_id": nid, "source": "nope"})
