@@ -239,7 +239,7 @@ class _FakeWikidataClient:
 
 
 def test_wikidata_maps_claims():
-    p = WikidataProvider(client=_FakeWikidataClient())
+    p = WikidataProvider(client=_FakeWikidataClient(), min_interval=0)
     results = p.search("Samantha Fox")
     assert len(results) == 1
     r = results[0]
@@ -252,6 +252,45 @@ def test_wikidata_maps_claims():
     assert r.country == "United Kingdom"
     assert r.urls == ["https://samfox.com"]
     assert r.images == ["https://commons.wikimedia.org/wiki/Special:FilePath/Samantha_Fox.jpg"]
+
+
+class _Resp429:
+    status_code = 429
+    headers = {"Retry-After": "0"}
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {}
+
+
+class _RespOk:
+    status_code = 200
+    headers: dict = {}
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"ok": True}
+
+
+class _Fake429ThenOk:
+    def __init__(self):
+        self.calls = 0
+
+    def get(self, url, params):
+        self.calls += 1
+        return _Resp429() if self.calls == 1 else _RespOk()
+
+
+def test_wikidata_retries_on_429(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)  # no real waiting
+    fake = _Fake429ThenOk()
+    p = WikidataProvider(client=fake, min_interval=0)
+    assert p._get({"action": "test"}) == {"ok": True}
+    assert fake.calls == 2  # 429 once, then retried and succeeded
 
 
 # --- parse.bot (The Handbook) ---

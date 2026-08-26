@@ -6,6 +6,9 @@ claims (gender, country, …) to English labels. Maps the standalone performer f
 absent claims stay null (only-populated-fields is enforced downstream). See docs/ENRICHMENT.md §3.
 """
 
+import threading
+import time
+
 import httpx
 
 from bridge.app.providers.base import ProviderError
@@ -13,6 +16,18 @@ from bridge.app.providers.models import PerformerData
 
 _API = "https://www.wikidata.org/w/api.php"
 _HUMAN = "Q5"
+_MAX_BACKOFF = 30.0
+
+
+def _retry_after(resp, base: float, attempt: int) -> float:
+    """Seconds to wait before a 429 retry: the Retry-After header if present, else backoff."""
+    header = resp.headers.get("Retry-After") if hasattr(resp, "headers") else None
+    if header:
+        try:
+            return min(float(header), _MAX_BACKOFF)
+        except ValueError:
+            pass
+    return min(base * (2**attempt), _MAX_BACKOFF)
 
 # P21 gender item → label (avoids a lookup for the common cases).
 _GENDER = {
@@ -69,19 +84,44 @@ class WikidataProvider:
     label = "Wikidata"
     metered = False
 
-    def __init__(self, client: httpx.Client | None = None):
+    def __init__(
+        self,
+        client: httpx.Client | None = None,
+        min_interval: float = 0.5,
+        max_retries: int = 4,
+    ):
         self._client = client or httpx.Client(
             timeout=20.0,
             headers={"User-Agent": "stash-performer-id/0.1 (enrichment; local)"},
         )
+        # Wikidata expects serial requests; a batch bursts many and gets 429. Keep a minimum gap
+        # between calls and retry on 429 (honouring Retry-After). The lock serialises calls made
+        # from FastAPI's threadpool so the throttle holds under concurrency too.
+        self._min_interval = min_interval
+        self._max_retries = max_retries
+        self._lock = threading.Lock()
+        self._last_ts = 0.0
 
     def _get(self, params: dict) -> dict:
-        try:
-            resp = self._client.get(_API, params={**params, "format": "json"})
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPError as e:
-            raise ProviderError(f"wikidata: {e}") from e
+        with self._lock:
+            for attempt in range(self._max_retries + 1):
+                gap = self._min_interval - (time.monotonic() - self._last_ts)
+                if gap > 0:
+                    time.sleep(gap)
+                try:
+                    resp = self._client.get(_API, params={**params, "format": "json"})
+                except httpx.HTTPError as e:
+                    raise ProviderError(f"wikidata: {e}") from e
+                self._last_ts = time.monotonic()
+                if getattr(resp, "status_code", 200) == 429 and attempt < self._max_retries:
+                    time.sleep(_retry_after(resp, self._min_interval, attempt))
+                    continue
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPError as e:
+                    raise ProviderError(f"wikidata: {e}") from e
+                return resp.json()
+        raise ProviderError("wikidata: rate limited (429) after retries")
 
     def _resolve_labels(self, qids: set[str]) -> dict[str, str]:
         if not qids:
