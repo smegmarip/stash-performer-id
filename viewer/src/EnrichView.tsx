@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./lib/api";
-import type { EnrichSource, NameRow } from "./lib/api";
+import type { Candidate, EnrichSource, NameRow } from "./lib/api";
 import { useDebounced } from "./lib/useDebounced";
 import { useUrlNumber, useUrlState } from "./lib/useUrlState";
 import { EnrichModal } from "./ui/EnrichModal";
@@ -9,11 +9,11 @@ import { Pager } from "./ui/Pager";
 
 const PAGE = 50;
 type Status = Record<number, { fields: number; sources: string[] }>;
-// Transient per-row state while a client-driven batch runs, so each row updates live as its
-// own request resolves (the Stash tagger paradigm) instead of only at the end of the batch.
+// Transient per-row state while a search runs, so each row updates live as its own request
+// resolves (the Stash tagger paradigm) — and on completion holds the candidates to render inline.
 type RowBatch =
   | { phase: "searching" }
-  | { phase: "done"; count?: number; applied?: number; error?: string | null };
+  | { phase: "done"; candidates?: Candidate[]; applied?: number; error?: string | null };
 
 export default function EnrichView() {
   const [sources, setSources] = useState<EnrichSource[]>([]);
@@ -28,7 +28,11 @@ export default function EnrichView() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [modal, setModal] = useState<{ nameId: number; name: string } | null>(null);
+  const [modal, setModal] = useState<{
+    nameId: number;
+    name: string;
+    candidate?: Candidate;
+  } | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [rowBatch, setRowBatch] = useState<Record<number, RowBatch>>({});
   const stopRef = useRef(false);
@@ -72,6 +76,23 @@ export default function EnrichView() {
 
   const targets = () => (selected.size ? [...selected] : names.map((n) => n.id));
 
+  // The search interface for one name: searching -> /enrichment/search (cache-first) -> hold the
+  // candidates so the row renders them inline. Used by the per-row button and the batch loop.
+  async function searchOne(id: number): Promise<number> {
+    setRowBatch((s) => ({ ...s, [id]: { phase: "searching" } }));
+    try {
+      const r = await api.enrichSearch(id, source);
+      setRowBatch((s) => ({
+        ...s,
+        [id]: { phase: "done", candidates: r.candidates, error: r.error },
+      }));
+      return r.candidates.length;
+    } catch (e) {
+      setRowBatch((s) => ({ ...s, [id]: { phase: "done", error: String(e) } }));
+      return 0;
+    }
+  }
+
   // Drive the batch client-side, one name at a time, so every row reflects its own request as it
   // resolves: searching -> external API -> DB persist (server) -> live UI update for that row.
   // Sequential (Stash Batch Search paradigm) and cancellable via Stop.
@@ -90,14 +111,11 @@ export default function EnrichView() {
     let found = 0;
     for (const id of ids) {
       if (stopRef.current) break;
-      setRowBatch((s) => ({ ...s, [id]: { phase: "searching" } }));
       try {
         if (kind === "search") {
-          const r = await api.enrichSearch(id, source); // cache-first; persists on a live hit
-          const count = r.candidates.length;
-          if (count) found++;
-          setRowBatch((s) => ({ ...s, [id]: { phase: "done", count, error: r.error } }));
+          if ((await searchOne(id)) > 0) found++;
         } else {
+          setRowBatch((s) => ({ ...s, [id]: { phase: "searching" } }));
           const res = (await api.updateBatch([id], source, [])).results[0];
           const applied = res?.applied ?? 0;
           if (applied > 0) found++;
@@ -295,17 +313,43 @@ export default function EnrichView() {
                           <span className="badge badge-soft badge-error badge-sm" title={rb.error}>
                             error
                           </span>
-                        ) : rb?.phase === "done" && rb.count === 0 ? (
+                        ) : rb?.phase === "done" && rb.candidates && rb.candidates.length ? (
+                          // Candidate matches inline, like a Stash tagger card. Click one to resolve.
+                          <div className="flex flex-wrap gap-1.5">
+                            {rb.candidates.map((c) => {
+                              const img = (c.data.images ?? [])[0] as string | undefined;
+                              return (
+                                <button
+                                  key={`${c.source}-${c.source_entity_id}`}
+                                  type="button"
+                                  className="border-base-content/10 bg-base-200 hover:bg-base-300 inline-flex max-w-56 items-center gap-1.5 rounded-full border py-1 pe-2.5 ps-1 text-xs"
+                                  onClick={() =>
+                                    setModal({ nameId: row.id, name: row.name, candidate: c })
+                                  }
+                                  title="Open to resolve"
+                                >
+                                  {img ? (
+                                    <img
+                                      src={img}
+                                      alt=""
+                                      className="size-5 shrink-0 rounded-full object-cover"
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <span className="icon-[tabler--user] text-base-content/40 size-5 shrink-0" />
+                                  )}
+                                  <span className="truncate">{c.data.name}</span>
+                                  {c.data.disambiguation != null && (
+                                    <span className="text-base-content/50 shrink-0">
+                                      ({String(c.data.disambiguation)})
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : rb?.phase === "done" ? (
                           <span className="badge badge-soft badge-sm">no match</span>
-                        ) : rb?.phase === "done" && rb.count ? (
-                          <button
-                            type="button"
-                            className="badge badge-soft badge-info badge-sm"
-                            onClick={() => setModal({ nameId: row.id, name: row.name })}
-                            title="Review candidates"
-                          >
-                            {rb.count} candidate{rb.count === 1 ? "" : "s"}
-                          </button>
                         ) : st ? (
                           <span className="badge badge-soft badge-success badge-sm" title={st.sources.join(", ")}>
                             {st.fields} fields · {st.sources.join(", ")}
@@ -318,8 +362,9 @@ export default function EnrichView() {
                         <button
                           type="button"
                           className="btn btn-soft btn-sm"
-                          disabled={!source}
-                          onClick={() => setModal({ nameId: row.id, name: row.name })}
+                          disabled={!source || busy || rb?.phase === "searching"}
+                          onClick={() => void searchOne(row.id)}
+                          title="Search this name for candidates"
                         >
                           <span className="icon-[tabler--search] size-4" />
                           Search
@@ -347,6 +392,7 @@ export default function EnrichView() {
           nameId={modal.nameId}
           name={modal.name}
           source={source}
+          initialCandidate={modal.candidate}
           onClose={() => setModal(null)}
           onApplied={() => void refresh()}
         />

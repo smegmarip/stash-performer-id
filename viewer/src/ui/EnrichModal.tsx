@@ -187,17 +187,21 @@ export function EnrichModal({
   nameId,
   name,
   source,
+  initialCandidate,
   onClose,
   onApplied,
 }: {
   nameId: number;
   name: string;
   source: string;
+  initialCandidate?: Candidate;
   onClose: () => void;
   onApplied: () => void;
 }) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [selected, setSelected] = useState<Candidate | null>(null);
+  // Opened from an inline candidate -> jump straight to the resolve pane for it; the full list
+  // still loads in the background for the "Candidates" back button.
+  const [selected, setSelected] = useState<Candidate | null>(initialCandidate ?? null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
