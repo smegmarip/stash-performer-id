@@ -134,9 +134,18 @@ class Database:
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         # check_same_thread=False: FastAPI runs sync endpoints in a threadpool. SQLite's
         # default serialized mode makes a shared connection safe for our low-concurrency use.
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=30.0)
         self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=30000")
+        # WAL improves multi-connection concurrency but needs an mmap'd -shm file and POSIX
+        # locking that FUSE user shares (Unraid /mnt/user shfs) don't provide — there the pragma
+        # raises "database is locked". We run one process with a single shared connection, so WAL
+        # isn't required for correctness; fall back to the default rollback journal if it's
+        # rejected so the DB works on network/FUSE filesystems too.
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            pass
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.init_schema()
 
