@@ -67,3 +67,14 @@ services:
       - "${VIEWER_PORT:-15001}:80"
     depends_on:
       - stash-performer-id
+
+networks:
+  # The whole stack runs on ONE network, named by DOCKER_NETWORK (default stash_network), so it
+  # shares a network with an external FlareSolverr and resolves it by name via FLARESOLVERR_URL —
+  # no second network, no per-service wiring. Declared external, so create it once with any
+  # outside containers attached:
+  #   docker network create stash_network
+  #   docker network connect stash_network <your-flaresolverr-container>
+  default:
+    external: true
+    name: ${DOCKER_NETWORK:-stash_network}
