@@ -10,8 +10,11 @@ from bridge.app.harvest.normalize import candidate
 from bridge.app.stash.client import StashClient
 
 _GALLERIES_QUERY = """
-query Galleries($page: Int!, $per_page: Int!) {
-  findGalleries(filter: {page: $page, per_page: $per_page, sort: "path", direction: ASC}) {
+query Galleries($page: Int!, $per_page: Int!, $gf: GalleryFilterType) {
+  findGalleries(
+    gallery_filter: $gf
+    filter: {page: $page, per_page: $per_page, sort: "path", direction: ASC}
+  ) {
     count
     galleries {
       id
@@ -52,15 +55,25 @@ def _basename_no_ext(path: str | None) -> str | None:
 
 
 def harvest_galleries(
-    db: Database, stash: StashClient, per_page: int = 100, progress=None
+    db: Database, stash: StashClient, per_page: int = 100, progress=None,
+    path_prefix: str | None = None,
 ) -> dict:
-    """Populate asset/relationship/candidate tables from Stash galleries. Returns counts."""
+    """Populate asset/relationship/candidate tables from Stash galleries. Returns counts.
+
+    When `path_prefix` is set (from TOP_FOLDER), only galleries whose path contains it are
+    harvested; otherwise the whole library is swept.
+    """
+    # Stash has no STARTS_WITH modifier; INCLUDES is a substring match, which for a rooted
+    # absolute path behaves as a prefix filter.
+    gf = {"path": {"value": path_prefix, "modifier": "INCLUDES"}} if path_prefix else None
     page = 1
     total = None
     seen = 0
     images = 0
     while True:
-        data = stash.query(_GALLERIES_QUERY, {"page": page, "per_page": per_page})
+        data = stash.query(
+            _GALLERIES_QUERY, {"page": page, "per_page": per_page, "gf": gf}
+        )
         block = data["findGalleries"]
         if total is None:
             total = block["count"]

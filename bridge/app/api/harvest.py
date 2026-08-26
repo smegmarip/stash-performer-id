@@ -21,8 +21,9 @@ def _stash() -> StashClient:
 
 @router.post("/galleries")
 def run_gallery_harvest(db: Database = Depends(get_db)) -> dict:
+    # Scope to TOP_FOLDER when configured (else the whole library is harvested).
     with _stash() as stash:
-        return harvest_galleries(db, stash)
+        return harvest_galleries(db, stash, path_prefix=get_settings().top_folder)
 
 
 class PathBody(BaseModel):
