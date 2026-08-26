@@ -24,7 +24,7 @@ services:
       - FLARESOLVERR_URL=${FLARESOLVERR_URL:-http://flaresolverr:8191/v1}
       - TOP_FOLDER=${TOP_FOLDER:-}
       - MEDIA_ROOT=/data
-      - DB_PATH=/cache/stash-performer-id.sqlite
+      - DB_PATH=${DB_PATH:-/cache/stash-performer-id.sqlite}
     depends_on:
       # Wait for the bundled sidecar only when its profile is active; skipped otherwise.
       flaresolverr:
@@ -33,7 +33,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./cache:/cache
+      # Writable cache/DB dir. Override CACHE_ROOT_HOST to a host path the container user
+      # (UID 1000) can write; the default ./cache is auto-created by the daemon as root and
+      # will fail. The container mount target must match DB_PATH's directory.
+      - ${CACHE_ROOT_HOST:-./cache}:/cache
       # Read-only media mount for path harvest (Phase 1). Point at the Stash media root.
       - ${MEDIA_ROOT_HOST:-./data}:/data:ro
 
