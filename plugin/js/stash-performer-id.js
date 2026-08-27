@@ -335,17 +335,145 @@
       /* quota — ignore */
     }
   }
-  function useLocalStorage(key, fallback) {
-    var pair = useState(function () {
-      return loadSetting(key, fallback);
+  // URL <-> view state for the tagger's filter / sort / pagination, so the current view is
+  // bookmarkable and shareable. Each field keeps its own useState (so every existing call site —
+  // pageState[1], tagIncS[0], etc. — is untouched); a SINGLE effect serializes the whole set into
+  // the query string, so per-field setters never clobber each other's params. The query string is
+  // parsed exactly once on mount (thereafter React state is the source of truth); a reload or a
+  // shared link therefore restores the view. Sticky prefs (per-page / sort) still mirror to
+  // localStorage and seed from it when the URL omits them, so a fresh visit keeps your last choice.
+  function useTaggerUrlState() {
+    var RRD = api.libraries.ReactRouterDOM;
+    var history = RRD.useHistory();
+    var location = RRD.useLocation();
+
+    // Parse the query string a single time (mount). Ref, not state, so it never re-triggers.
+    var parsedRef = useRef(null);
+    if (parsedRef.current === null) parsedRef.current = new URLSearchParams(location.search);
+    var q = parsedRef.current;
+
+    function qint(k, dflt) {
+      var v = q.get(k);
+      if (v === null || v === "") return dflt;
+      var n = parseInt(v, 10);
+      return isNaN(n) ? dflt : n;
+    }
+    function qids(k) {
+      var v = q.get(k);
+      return v ? v.split(",").filter(Boolean) : [];
+    }
+    // Sticky pref: the URL wins, else the persisted localStorage value, else the default.
+    function qsticky(urlKey, storeKey, dflt) {
+      var v = q.get(urlKey);
+      return v !== null && v !== "" ? v : loadSetting(storeKey, dflt);
+    }
+
+    var page = useState(function () {
+      return qint("p", 1);
     });
+    var perPage = useState(function () {
+      // Only honor a URL per-page that's an offered size, else the select would show a value it
+      // can't render while the query used another. Fall back to the stored pref, then the default.
+      var n = parseInt(q.get("perPage"), 10);
+      if (PER_PAGE_OPTIONS.indexOf(n) >= 0) return n;
+      var stored = loadSetting("perPage", 40);
+      return PER_PAGE_OPTIONS.indexOf(stored) >= 0 ? stored : 40;
+    });
+    var sortField = useState(function () {
+      return qsticky("sortby", "sortField", "path");
+    });
+    var sortDir = useState(function () {
+      return qsticky("sortdir", "sortDir", "ASC");
+    });
+
+    var tagInc = useState(function () {
+      return qids("tags");
+    });
+    var tagExc = useState(function () {
+      return qids("tags_exc");
+    });
+    var tagDepth = useState(function () {
+      return qint("depth", 0);
+    });
+    var path = useState(function () {
+      var v = q.get("path");
+      return v === null ? "" : v;
+    });
+    var pathMod = useState(function () {
+      return q.get("path_mod") || GQL.CriterionModifier.Includes;
+    });
+    var org = useState(function () {
+      var v = q.get("organized");
+      return v === null ? null : v === "true";
+    });
+
+    // Mirror the sticky prefs to localStorage (same keys the old useLocalStorage used).
     React.useEffect(
       function () {
-        saveSetting(key, pair[0]);
+        saveSetting("perPage", perPage[0]);
       },
-      [key, pair[0]]
+      [perPage[0]]
     );
-    return pair;
+    React.useEffect(
+      function () {
+        saveSetting("sortField", sortField[0]);
+      },
+      [sortField[0]]
+    );
+    React.useEffect(
+      function () {
+        saveSetting("sortDir", sortDir[0]);
+      },
+      [sortDir[0]]
+    );
+
+    // Single writer: serialize the whole view into the query string. replace() (not push) keeps the
+    // browser history clean — the back button leaves the page rather than unwinding filter edits.
+    React.useEffect(
+      function () {
+        var p = new URLSearchParams();
+        if (page[0] !== 1) p.set("p", String(page[0]));
+        p.set("perPage", String(perPage[0]));
+        p.set("sortby", sortField[0]);
+        p.set("sortdir", sortDir[0]);
+        if (tagInc[0].length) p.set("tags", tagInc[0].join(","));
+        if (tagExc[0].length) p.set("tags_exc", tagExc[0].join(","));
+        if (tagDepth[0]) p.set("depth", String(tagDepth[0]));
+        if (path[0]) {
+          p.set("path", path[0]);
+          if (pathMod[0] !== GQL.CriterionModifier.Includes) p.set("path_mod", pathMod[0]);
+        }
+        if (org[0] !== null) p.set("organized", String(org[0]));
+        var next = p.toString();
+        var current = (history.location.search || "").replace(/^\?/, "");
+        if (next !== current) history.replace({ search: next ? "?" + next : "" });
+      },
+      [
+        page[0],
+        perPage[0],
+        sortField[0],
+        sortDir[0],
+        tagInc[0],
+        tagExc[0],
+        tagDepth[0],
+        path[0],
+        pathMod[0],
+        org[0],
+      ]
+    );
+
+    return {
+      pageState: page,
+      perPageLS: perPage,
+      sortFieldLS: sortField,
+      sortDirLS: sortDir,
+      tagIncS: tagInc,
+      tagExcS: tagExc,
+      tagDepthS: tagDepth,
+      pathS: path,
+      pathModS: pathMod,
+      orgS: org,
+    };
   }
 
   function useAllTags() {
@@ -1284,17 +1412,21 @@
   // =========================================================================
 
   function ImageTaggerPageInner() {
-    var pageState = useState(1);
+    // Filter / sort / pagination live in the URL (bookmarkable & shareable), seeded from
+    // localStorage for the sticky prefs. All the [value, setValue] tuples below keep the same shape
+    // as the old useState/useLocalStorage, so every downstream call site is unchanged.
+    var urlState = useTaggerUrlState();
+    var pageState = urlState.pageState;
     var page = pageState[0];
     var setPage = pageState[1];
 
-    var perPageLS = useLocalStorage("perPage", 40);
+    var perPageLS = urlState.perPageLS;
     var perPage = perPageLS[0];
     var setPerPage = perPageLS[1];
-    var sortFieldLS = useLocalStorage("sortField", "path");
+    var sortFieldLS = urlState.sortFieldLS;
     var sortField = sortFieldLS[0];
     var setSortField = sortFieldLS[1];
-    var sortDirLS = useLocalStorage("sortDir", "ASC");
+    var sortDirLS = urlState.sortDirLS;
     var sortDir = sortDirLS[0];
     var setSortDir = sortDirLS[1];
 
@@ -1348,12 +1480,12 @@
     var filterOpenS = useState(false);
     var filterOpen = filterOpenS[0];
     var setFilterOpen = filterOpenS[1];
-    var tagIncS = useState([]);
-    var tagExcS = useState([]);
-    var tagDepthS = useState(0);
-    var pathS = useState("");
-    var pathModS = useState(GQL.CriterionModifier.Includes);
-    var orgS = useState(null);
+    var tagIncS = urlState.tagIncS;
+    var tagExcS = urlState.tagExcS;
+    var tagDepthS = urlState.tagDepthS;
+    var pathS = urlState.pathS;
+    var pathModS = urlState.pathModS;
+    var orgS = urlState.orgS;
 
     var filterTagIncludeIds = tagIncS[0];
     var filterTagExcludeIds = tagExcS[0];
