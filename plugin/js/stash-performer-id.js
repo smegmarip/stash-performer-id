@@ -535,6 +535,7 @@
   function EditFilterModal(props) {
     var allTags = props.allTags;
     var Icon = api.components.Icon;
+    var FolderSelect = api.components.FolderSelect;
 
     var openSectionState = useState("tags");
     var openSection = openSectionState[0];
@@ -551,6 +552,7 @@
       props.onFilterTagExcludeChange([]);
       props.onFilterTagDepthChange(0);
       props.onFilterPathChange("");
+      props.onFilterPathModifierChange(GQL.CriterionModifier.Includes);
       props.onFilterOrganizedChange(null);
     }
     function clearSection(key) {
@@ -559,7 +561,10 @@
         props.onFilterTagExcludeChange([]);
         props.onFilterTagDepthChange(0);
       }
-      if (key === "path") props.onFilterPathChange("");
+      if (key === "path") {
+        props.onFilterPathChange("");
+        props.onFilterPathModifierChange(GQL.CriterionModifier.Includes);
+      }
       if (key === "organized") props.onFilterOrganizedChange(null);
     }
 
@@ -569,12 +574,12 @@
         { key: key },
         el(
           Accordion.Toggle,
-          { eventKey: key, className: "spid-filter-header" },
+          { eventKey: key, className: "filter-item-header" },
           el(
             "span",
             { className: "mr-auto" },
             el(Icon, {
-              className: "fa-fw",
+              className: "collapse-icon fa-fw",
               icon: openSection === key ? FA.faChevronDown : FA.faChevronRight,
             }),
             " " + label
@@ -583,6 +588,7 @@
             el(
               Button,
               {
+                className: "remove-criterion-button",
                 variant: "minimal",
                 onClick: function (e) {
                   e.stopPropagation();
@@ -598,7 +604,7 @@
 
     return el(
       Modal,
-      { show: props.show, onHide: props.onClose, className: "spid-filter-dialog" },
+      { show: props.show, onHide: props.onClose, className: "edit-filter-dialog" },
       el(Modal.Header, null, el("div", null, "Edit Filter")),
       el(
         Modal.Body,
@@ -606,6 +612,7 @@
         el(
           Accordion,
           {
+            className: "criterion-list",
             activeKey: openSection,
             onSelect: function (k) {
               setOpenSection(k === openSection ? null : k);
@@ -646,7 +653,7 @@
               null,
               el(
                 Form.Group,
-                { className: "spid-modifier-options" },
+                { className: "modifier-options" },
                 [GQL.CriterionModifier.Includes, GQL.CriterionModifier.MatchesRegex].map(
                   function (m) {
                     var label = m === GQL.CriterionModifier.Includes ? "includes" : "matches regex";
@@ -654,9 +661,9 @@
                       Button,
                       {
                         key: m,
-                        variant: props.filterPathModifier === m ? "primary" : "secondary",
-                        size: "sm",
-                        className: "mr-2",
+                        className:
+                          "modifier-option" +
+                          (props.filterPathModifier === m ? " selected" : ""),
                         onClick: function () {
                           props.onFilterPathModifierChange(m);
                         },
@@ -666,14 +673,26 @@
                   }
                 )
               ),
-              el(Form.Control, {
-                className: "btn-secondary",
-                placeholder: "File path…",
-                value: props.filterPath,
-                onChange: function (e) {
-                  props.onFilterPathChange(e.target.value);
-                },
-              })
+              // Native folder browser for "includes"; a text field for "matches regex".
+              // FolderSelect is registered into api.components once the Tags chunk is loaded
+              // (see ImageTaggerPage's useLoadComponents), same as the reference tag-manager.
+              props.filterPathModifier === GQL.CriterionModifier.MatchesRegex
+                ? el(Form.Control, {
+                    className: "btn-secondary",
+                    placeholder: "File path…",
+                    value: props.filterPath,
+                    onChange: function (e) {
+                      props.onFilterPathChange(e.target.value);
+                    },
+                  })
+                : el(FolderSelect, {
+                    currentDirectory: props.filterPath,
+                    onChangeDirectory: props.onFilterPathChange,
+                    defaultDirectories: props.libraryPaths,
+                    collapsible: true,
+                    quotePath: true,
+                    hideError: true,
+                  })
             )
           ),
           filterCard(
@@ -682,7 +701,7 @@
             props.filterOrganized !== null,
             el(
               "div",
-              null,
+              { className: "boolean-filter" },
               [
                 { label: "Any", value: null },
                 { label: "Organized", value: true },
@@ -707,8 +726,17 @@
       el(
         Modal.Footer,
         null,
-        hasAnyFilter && el(Button, { variant: "secondary", onClick: handleClear }, "Clear All"),
-        el(Button, { onClick: props.onClose }, "Close")
+        el(
+          "div",
+          null,
+          hasAnyFilter && el(Button, { variant: "secondary", onClick: handleClear }, "Clear All")
+        ),
+        el(
+          "div",
+          null,
+          el(Button, { variant: "secondary", onClick: props.onClose }, "Cancel"),
+          el(Button, { onClick: props.onClose }, "Apply")
+        )
       )
     );
   }
@@ -1248,6 +1276,22 @@
     var setSortDir = sortDirLS[1];
 
     var allTags = useAllTags();
+    // Library paths for the filter's native FolderSelect (default directories).
+    var configResult = GQL.useConfigurationQuery();
+    var libraryPaths = useMemo(
+      function () {
+        var stashes =
+          configResult.data &&
+          configResult.data.configuration &&
+          configResult.data.configuration.general.stashes;
+        return stashes
+          ? stashes.map(function (s) {
+              return s.path;
+            })
+          : [];
+      },
+      [configResult.data]
+    );
     var toast = api.hooks.useToast();
 
     // Per-row tagger state, keyed by image id.
@@ -1690,6 +1734,7 @@
       el(EditFilterModal, {
         show: filterOpen,
         allTags: allTags,
+        libraryPaths: libraryPaths,
         filterTagIncludeIds: filterTagIncludeIds,
         filterTagExcludeIds: filterTagExcludeIds,
         filterTagDepth: filterTagDepth,
@@ -1859,8 +1904,11 @@
   // =========================================================================
 
   function ImageTaggerPage() {
+    // Tags pulls in the list-filter component chunk that registers FolderSelect (and the other
+    // *Select filter controls) into api.components — the same load the reference tag-manager does.
     var loadingComponents = api.hooks.useLoadComponents([
       api.loadableComponents.PerformerSelect,
+      api.loadableComponents.Tags,
     ]);
     if (loadingComponents) {
       return el(

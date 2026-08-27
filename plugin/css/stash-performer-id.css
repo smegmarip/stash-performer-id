@@ -173,14 +173,3 @@
 .spid-btn-exclude.active {
   color: #e57373;
 }
-
-.spid-modifier-options {
-  margin-bottom: 0.5rem;
-}
-
-.spid-filter-header {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  cursor: pointer;
-}
