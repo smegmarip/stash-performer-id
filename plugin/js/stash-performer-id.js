@@ -231,6 +231,24 @@
     return input;
   }
 
+  // After an imperative performerCreate (which bypasses Apollo), evict the cached performer
+  // queries so every mounted PerformerSelect refetches and shows the new performer without a page
+  // refresh — the same thing Stash's own usePerformerCreate does via its update() callback. We
+  // reuse Stash's evictQueries + Apollo client rather than reinventing cache invalidation.
+  function evictPerformerCache() {
+    try {
+      var SS = api.utils && api.utils.StashService;
+      if (!SS || !SS.getClient || !SS.evictQueries) return;
+      var docs = [
+        api.GQL.FindPerformersDocument,
+        api.GQL.FindPerformersForSelectDocument,
+      ].filter(Boolean);
+      if (docs.length) SS.evictQueries(SS.getClient().cache, docs);
+    } catch (e) {
+      /* best-effort UI refresh; never block the create on it */
+    }
+  }
+
   function createPerformer(scraped, excluded, imageUrl) {
     var img = imageUrl != null ? imageUrl : scraped.images && scraped.images[0];
     return gql(
@@ -238,7 +256,9 @@
         " id name disambiguation } }",
       { input: buildPerformerInput(scraped, excluded, img) }
     ).then(function (d) {
-      return (d && d.performerCreate) || null;
+      var p = (d && d.performerCreate) || null;
+      if (p) evictPerformerCache(); // refresh PerformerSelect dropdowns (modal + batch paths)
+      return p;
     });
   }
 
