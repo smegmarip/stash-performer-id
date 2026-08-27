@@ -21,6 +21,7 @@ from enum import Enum
 import strawberry
 
 from bridge.app.api.deps import get_db
+from bridge.app.api.imageproxy import proxy_image_url
 
 SERVICE_NAME = "stash-performer-id"
 
@@ -203,7 +204,8 @@ def _to_performer(
         gender=_to_enum(GenderEnum, p.get("gender")),
         urls=[URL(url=u, type="") for u in (p.get("urls") or []) if u],
         images=[
-            Image(id=strawberry.ID(f"{name_id}#{i}"), url=u)
+            # Route hotlink-protected hosts through the proxy so Stash can fetch them on create.
+            Image(id=strawberry.ID(f"{name_id}#{i}"), url=proxy_image_url(u))
             for i, u in enumerate(p.get("images") or [])
             if u
         ],

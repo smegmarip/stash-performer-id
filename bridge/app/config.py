@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     stash_url: str = "http://localhost:9999"
     stash_api_key: SecretStr | None = None
 
+    # Image hosts whose enrichment images block direct hotlinks (Referer checks) and so must be
+    # refetched through /image-proxy before handing the URL to Stash. Comma-separated host suffixes
+    # ("*" proxies every host). Uses public_base_url, so that must be reachable by Stash (and, for
+    # in-UI previews, the browser) — the same requirement the stash-box endpoint already has.
+    image_proxy_hosts: str = "thehandbook.com"
+
     # --- Enrichment ---
     parse_bot_api_key: SecretStr | None = None
     parse_bot_budget: int = 199  # soft credit ceiling for metered parse.bot calls

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from bridge.app.api.deps import get_db
+from bridge.app.api.imageproxy import proxy_image_url
 from bridge.app.cache.db import Database
 
 router = APIRouter(prefix="/scrape")
@@ -41,7 +42,8 @@ def _merge_profile(performer: dict, profile: dict) -> None:
     if profile.get("urls"):
         performer["urls"] = profile["urls"]
     if profile.get("images"):
-        performer["images"] = profile["images"]
+        # Route hotlink-protected hosts through the proxy so Stash can fetch them on create.
+        performer["images"] = [proxy_image_url(u) for u in profile["images"] if u]
 
 
 class _File(BaseModel, extra="ignore"):

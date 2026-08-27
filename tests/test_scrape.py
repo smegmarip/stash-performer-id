@@ -121,4 +121,16 @@ def test_scrape_merges_enrichment_profile(ctx):
     assert p["gender"] == "Female" and p["country"] == "US"
     assert p["aliases"] == "Janie, JD"  # list -> comma-joined string (ScrapedPerformer shape)
     assert p["urls"] == ["https://example.com/jane"]
-    assert p["images"] == ["https://example.com/jane.jpg"]
+    assert p["images"] == ["https://example.com/jane.jpg"]  # non-proxied host stays direct
+
+
+def test_scrape_proxies_hotlink_protected_images(ctx):
+    db, client, nid = ctx
+    db.apply_enrichment_profile(
+        nid,
+        {"images": {"value": ["https://thehandbook.com/p/jane.jpg"], "source": "parsebot"}},
+    )
+    p = client.post("/scrape/image", json={"id": "i1", "files": []}).json()["performers"][0]
+    # thehandbook.com is a default proxy host -> the URL is rewritten through /image-proxy.
+    assert p["images"][0].startswith("http://localhost:15000/image-proxy?url=")
+    assert "thehandbook.com" in p["images"][0]  # original URL encoded in the query
