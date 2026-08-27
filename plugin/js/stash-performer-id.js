@@ -151,12 +151,15 @@
     }
     var byStashId = scraped.remote_site_id
       ? stashIdEndpointKey().then(function (key) {
+          // The deprecated stash_id_endpoint takes StashIDCriterionInput { stash_id: String };
+          // the newer stash_ids_endpoint takes StashIDsCriterionInput { stash_ids: [String] }.
+          var id = String(scraped.remote_site_id);
+          var crit =
+            key === "stash_ids_endpoint"
+              ? { endpoint: ENDPOINT, stash_ids: [id], modifier: "EQUALS" }
+              : { endpoint: ENDPOINT, stash_id: id, modifier: "EQUALS" };
           var filter = {};
-          filter[key] = {
-            endpoint: ENDPOINT,
-            stash_id: String(scraped.remote_site_id),
-            modifier: "EQUALS",
-          };
+          filter[key] = crit;
           return findPerformers(filter);
         })
       : Promise.resolve(null);
