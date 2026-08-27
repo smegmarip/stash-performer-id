@@ -1462,6 +1462,28 @@
       });
     }
 
+    // Mirror Stash's scene-tagger createNewPerformer (Tagger/context.tsx): after a create, select
+    // the new performer on EVERY scraped row whose suggestion matches it — by remote_site_id (our
+    // names.id, the durable link) when present, else by name — not just the row that triggered the
+    // create. That's how the tagger's dropdowns "auto-update to match newly created performers": it
+    // propagates the id into local row state, not via any Apollo cache refresh.
+    function selectCreatedPerformer(scraped, performer) {
+      if (!scraped || !performer) return;
+      var rid = scraped.remote_site_id;
+      var nm = scraped.name;
+      setRowState(function (prev) {
+        var next = Object.assign({}, prev);
+        Object.keys(prev).forEach(function (id) {
+          var row = prev[id];
+          var sc = row && row.scraped;
+          if (!sc) return;
+          var matches = rid ? sc.remote_site_id === rid : nm && sc.name === nm;
+          if (matches) next[id] = Object.assign({}, row, { selected: performer, status: "idle" });
+        });
+        return next;
+      });
+    }
+
     // Row selection (checkboxes) + batch progress.
     var selS = useState(function () {
       return new Set();
@@ -2047,7 +2069,8 @@
             setCreateTarget(null);
           },
           onCreated: function (performer) {
-            patchRow(createTarget.image.id, { selected: performer, status: "idle" });
+            // Select the new performer on this row AND every other row with the same suggestion.
+            selectCreatedPerformer(createTarget.scraped, performer);
             setCreateTarget(null);
           },
         })
