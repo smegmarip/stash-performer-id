@@ -6,6 +6,7 @@ import { useDebounced } from "./lib/useDebounced";
 import { useUrlNumber, useUrlState } from "./lib/useUrlState";
 import { AssignCombobox } from "./ui/AssignCombobox";
 import { Pager } from "./ui/Pager";
+import { PerPage, usePerPage } from "./ui/PerPage";
 
 const SCOPES: { key: Scope; label: string; icon: string }[] = [
   { key: "gallery", label: "Gallery", icon: "icon-[tabler--photo]" },
@@ -26,7 +27,6 @@ const SORTS = [
   { key: "path", label: "Path" },
   { key: "name", label: "Name" },
 ] as const;
-const PAGE = 100;
 
 export default function AssetsView() {
   const [scopeStr, setScope] = useUrlState("scope", "gallery");
@@ -34,6 +34,7 @@ export default function AssetsView() {
   const [assets, setAssets] = useState<AssetRow[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useUrlNumber("offset", 0);
+  const [perPage, setPerPage] = usePerPage(100);
   const [search, setSearch] = useUrlState("q", "");
   const [sort, setSort] = useUrlState("sort", "path");
   const [order, setOrder] = useUrlState("order", "asc");
@@ -55,7 +56,7 @@ export default function AssetsView() {
           order,
           assigned: assigned === "all" ? undefined : assigned,
           entity_type: scope === "file" ? entity : undefined,
-          limit: PAGE,
+          limit: perPage,
           offset,
         }),
         api.listNames({ status: "valid", limit: 1000 }),
@@ -66,7 +67,7 @@ export default function AssetsView() {
     } catch (e) {
       setError(String(e));
     }
-  }, [scope, q, sort, order, assigned, entity, offset]);
+  }, [scope, q, sort, order, assigned, entity, perPage, offset]);
 
   useEffect(() => {
     void refresh();
@@ -188,6 +189,7 @@ export default function AssetsView() {
           >
             <span className={`size-4 ${order === "asc" ? "icon-[tabler--sort-ascending]" : "icon-[tabler--sort-descending]"}`} />
           </button>
+          <PerPage value={perPage} onChange={(n) => reset(() => setPerPage(n))} disabled={busy} />
         </div>
 
         <div className="card-body p-0">
@@ -261,7 +263,7 @@ export default function AssetsView() {
               </tbody>
             </table>
           </div>
-          <Pager total={total} offset={offset} page={PAGE} busy={busy} onOffset={setOffset} />
+          <Pager total={total} offset={offset} page={perPage} busy={busy} onOffset={setOffset} />
         </div>
       </div>
     </div>

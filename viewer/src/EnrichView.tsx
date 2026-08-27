@@ -6,9 +6,9 @@ import { useDebounced } from "./lib/useDebounced";
 import { useUrlNumber, useUrlState } from "./lib/useUrlState";
 import { EnrichModal } from "./ui/EnrichModal";
 import { Pager } from "./ui/Pager";
+import { PerPage, usePerPage } from "./ui/PerPage";
 import { ProfileModal } from "./ui/ProfileModal";
 
-const PAGE = 50;
 type Status = Record<
   number,
   { fields: number; sources: string[]; image: string | null }
@@ -43,6 +43,7 @@ export default function EnrichView() {
   const [names, setNames] = useState<NameRow[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useUrlNumber("offset", 0);
+  const [perPage, setPerPage] = usePerPage(50);
   const [search, setSearch] = useUrlState("q", "");
   const [status, setStatus] = useState<Status>({});
   const [credits, setCredits] = useState<{
@@ -96,7 +97,7 @@ export default function EnrichView() {
       const page = await api.listNames({
         status: "valid",
         q,
-        limit: PAGE,
+        limit: perPage,
         offset,
         enriched: filter === "all" ? undefined : filter,
       });
@@ -113,7 +114,7 @@ export default function EnrichView() {
     } catch (e) {
       setError(String(e));
     }
-  }, [q, offset, metered, filter]);
+  }, [q, offset, perPage, metered, filter]);
 
   useEffect(() => {
     void refresh();
@@ -286,6 +287,7 @@ export default function EnrichView() {
               </button>
             ))}
           </div>
+          <PerPage value={perPage} onChange={(n) => reset(() => setPerPage(n))} disabled={busy} />
 
           <div className="ms-auto flex items-center gap-2">
             {progress ? (
@@ -534,7 +536,7 @@ export default function EnrichView() {
           <Pager
             total={total}
             offset={offset}
-            page={PAGE}
+            page={perPage}
             busy={busy}
             onOffset={setOffset}
             alwaysShow
