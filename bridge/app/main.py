@@ -1,7 +1,7 @@
 """FastAPI app factory.
 
-Phase 0: a minimal stash-box surface (`me`) at /graphql plus /healthz.
-Resolvers, harvest, providers, and the name-DB API arrive in later phases.
+The stash-box PerformerTagger relay (bridge.app.stashbox) at /graphql — Stash's native
+metadata-provider surface — plus the name-DB / enrichment / harvest HTTP APIs and /healthz.
 """
 
 import strawberry
@@ -17,21 +17,7 @@ from bridge.app.api import names as names_api
 from bridge.app.api import scrape as scrape_api
 from bridge.app.api import thumbnails as thumbnails_api
 from bridge.app.config import get_settings
-
-SERVICE_NAME = "stash-performer-id"
-
-
-@strawberry.type
-class User:
-    name: str
-
-
-@strawberry.type
-class Query:
-    @strawberry.field
-    def me(self) -> User:
-        """Stash-Box identity/health probe."""
-        return User(name=SERVICE_NAME)
+from bridge.app.stashbox import SERVICE_NAME, Query
 
 
 def create_app() -> FastAPI:

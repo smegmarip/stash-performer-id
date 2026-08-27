@@ -643,6 +643,17 @@ class Database:
         self.conn.commit()
         return self.get_enrichment_profile(name_id)
 
+    def search_enriched_names(self, term: str, limit: int = 25) -> list[dict]:
+        """Valid names that have a resolved enrichment_profile, matching `term` — the curated set
+        the stash-box relay serves. Returns {id, name, disambiguation}."""
+        rows = self.conn.execute(
+            "SELECT n.id, n.name, n.disambiguation FROM names n"
+            " JOIN enrichment_profile ep ON ep.name_id = n.id"
+            " WHERE n.valid = 1 AND n.name LIKE ? ORDER BY n.name LIMIT ?",
+            (f"%{term}%", limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def add_credit(self, source: str, cost: int, name_id: int | None = None) -> None:
         self.conn.execute(
             "INSERT INTO enrichment_credit_ledger(source, cost, name_id, at) VALUES (?, ?, ?, ?)",
