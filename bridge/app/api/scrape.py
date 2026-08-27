@@ -48,24 +48,24 @@ class _File(BaseModel, extra="ignore"):
     path: str | None = None
 
 
-class ImageFragment(BaseModel, extra="ignore"):
-    """The subset of Stash's image fragment we key on (see script.go `imageInput`)."""
+class Fragment(BaseModel, extra="ignore"):
+    """The subset of Stash's image/scene fragment we key on (see script.go `imageInput`/
+    `sceneInput`): both carry an `id` and a `files` list with paths."""
 
     id: str | None = None
     files: list[_File] = []
 
 
-@router.post("/image")
-def scrape_image(fragment: ImageFragment, db: Database = Depends(get_db)) -> dict:
-    """Return the image's active name as a ScrapedImage `{performers: [...]}` (empty if none),
-    enriched with the resolved profile when one exists.
+def _resolve(db: Database, entity_type: str, fragment: Fragment) -> dict:
+    """Resolve a fragment to its active name as `{performers: [...]}` (empty if none), enriched
+    with the resolved profile when one exists.
 
     `remote_site_id` is the name-record id — the durable link the tagger stamps into the
     performer's `stash_ids` on create, so re-scrapes resolve to the same performer. Enrichment
     fields ride along when a profile has been resolved (docs/ENRICHMENT.md §6); no external calls.
     """
     paths = [f.path for f in fragment.files if f.path]
-    active = db.lookup_active_name_for_image(stash_id=fragment.id, paths=paths)
+    active = db.lookup_active_name(stash_id=fragment.id, paths=paths, entity_type=entity_type)
     if not active:
         return {"performers": []}
     performer: dict = {"name": active["name"], "remote_site_id": str(active["name_id"])}
@@ -75,3 +75,16 @@ def scrape_image(fragment: ImageFragment, db: Database = Depends(get_db)) -> dic
     if profile:
         _merge_profile(performer, profile)
     return {"performers": [performer]}
+
+
+@router.post("/image")
+def scrape_image(fragment: Fragment, db: Database = Depends(get_db)) -> dict:
+    """`imageByFragment` → the image's active performer as a ScrapedImage."""
+    return _resolve(db, "image", fragment)
+
+
+@router.post("/scene")
+def scrape_scene(fragment: Fragment, db: Database = Depends(get_db)) -> dict:
+    """`sceneByFragment` → the scene's active performer as a ScrapedScene (same `{performers}`
+    shape as ScrapedImage)."""
+    return _resolve(db, "scene", fragment)

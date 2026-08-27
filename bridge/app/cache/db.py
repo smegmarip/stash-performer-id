@@ -366,9 +366,14 @@ class Database:
     _ASSET_SORT = {"path": "path", "name": "basename", "id": "id"}
 
     @staticmethod
-    def _asset_where(resource_type: str, q: str | None, assigned: str | None) -> tuple[str, list]:
+    def _asset_where(
+        resource_type: str, q: str | None, assigned: str | None, entity_type: str | None = None
+    ) -> tuple[str, list]:
         where = ["resource_type = ?"]
         params: list = [resource_type]
+        if entity_type:  # e.g. narrow the file scope to image vs scene
+            where.append("stash_entity_type = ?")
+            params.append(entity_type)
         if q:
             where.append("(basename LIKE ? OR path LIKE ?)")
             params += [f"%{q}%", f"%{q}%"]
@@ -381,9 +386,13 @@ class Database:
         return " AND ".join(where), params
 
     def count_assets(
-        self, resource_type: str, q: str | None = None, assigned: str | None = None
+        self,
+        resource_type: str,
+        q: str | None = None,
+        assigned: str | None = None,
+        entity_type: str | None = None,
     ) -> int:
-        where, params = self._asset_where(resource_type, q, assigned)
+        where, params = self._asset_where(resource_type, q, assigned, entity_type)
         return self.conn.execute(
             f"SELECT COUNT(*) n FROM asset WHERE {where}", params
         ).fetchone()["n"]
@@ -397,11 +406,13 @@ class Database:
         assigned: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        entity_type: str | None = None,
     ) -> list[dict]:
         """Assets of a scope (gallery/folder/file) with the active assignment (incl. the
         source_level that set it) and member-image count. Names are assigned from the
-        authoritative `names` bank, so no per-asset candidates are returned."""
-        where, params = self._asset_where(resource_type, q, assigned)
+        authoritative `names` bank, so no per-asset candidates are returned. `entity_type`
+        narrows the file scope to image vs scene."""
+        where, params = self._asset_where(resource_type, q, assigned, entity_type)
         sort_col = self._ASSET_SORT.get(sort, "path")
         order_sql = "DESC" if order.lower() == "desc" else "ASC"
         assets = self.conn.execute(
@@ -485,22 +496,25 @@ class Database:
 
     # --- scrape surface (Step 2: image -> performer, via the metadata provider) ---
 
-    def lookup_active_name_for_image(
+    def lookup_active_name(
         self,
         stash_id: str | None = None,
         paths: list[str] | None = None,
+        entity_type: str = "image",
     ) -> dict | None:
-        """Resolve an image (by Stash image id, else by any of its file paths) to its active
-        name, for the `imageByFragment` scraper. Returns {name_id, name, disambiguation} or None.
+        """Resolve an entity (by Stash id for the given `entity_type`, else by any of its file
+        paths) to its active name, for the `*ByFragment` scrapers. Returns
+        {name_id, name, disambiguation} or None.
 
-        The image id is the reliable key (an image file-asset's stash_id IS the Stash image id);
-        paths are the fallback for assets harvested before an id was known.
+        The Stash id is the reliable key (an image/scene file-asset's stash_id IS the Stash entity
+        id); paths are the fallback for assets harvested before an id was known. Paths are unique
+        per file, so the path branch resolves the right asset regardless of entity_type.
         """
         asset_id = None
         if stash_id:
             row = self.conn.execute(
-                "SELECT id FROM asset WHERE stash_entity_type = 'image' AND stash_id = ?",
-                (stash_id,),
+                "SELECT id FROM asset WHERE stash_entity_type = ? AND stash_id = ?",
+                (entity_type, stash_id),
             ).fetchone()
             if row:
                 asset_id = row["id"]

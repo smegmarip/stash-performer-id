@@ -8,6 +8,7 @@ from bridge.app.cache.db import Database
 from bridge.app.config import get_settings
 from bridge.app.harvest.galleries import harvest_galleries
 from bridge.app.harvest.paths import harvest_path
+from bridge.app.harvest.scenes import harvest_scenes
 from bridge.app.stash.client import StashClient
 
 router = APIRouter(prefix="/harvest")
@@ -24,6 +25,13 @@ def run_gallery_harvest(db: Database = Depends(get_db)) -> dict:
     # Scope to TOP_FOLDER when configured (else the whole library is harvested).
     with _stash() as stash:
         return harvest_galleries(db, stash, path_prefix=get_settings().top_folder)
+
+
+@router.post("/scenes")
+def run_scene_harvest(db: Database = Depends(get_db)) -> dict:
+    # Scope to TOP_FOLDER when configured (else the whole library is harvested).
+    with _stash() as stash:
+        return harvest_scenes(db, stash, path_prefix=get_settings().top_folder)
 
 
 class PathBody(BaseModel):

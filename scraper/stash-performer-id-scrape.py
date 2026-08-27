@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Thin transport for the stash-performer-id image scraper.
+"""Thin transport for the stash-performer-id image/scene scraper.
 
-Stash runs this for `imageByFragment`, piping the image fragment JSON on stdin. We forward it to
-the metadata-provider service, which resolves the image's active name (Step 1) and returns a
-ScrapedImage `{performers: [...]}`. We print that straight back to stdout for Stash.
+Stash runs this for `imageByFragment`/`sceneByFragment`, piping the fragment JSON on stdin. The
+`--kind` arg (image|scene) selects the service endpoint. We forward the fragment to the
+metadata-provider service, which resolves the entity's active name (Step 1) and returns a
+ScrapedImage/ScrapedScene `{performers: [...]}`. We print that straight back to stdout for Stash.
 
 The service URL is NOT hardcoded: it's discovered from the metadata provider the user registered
 in Stash (Settings -> Metadata Providers -> Stash-Boxes), so Stash and the API can run on
@@ -13,11 +14,14 @@ the API base from it. Env/sibling-file are kept only as explicit overrides / off
 Stdlib only (no pip deps) — Stash containers rarely have third-party packages installed.
 """
 
+import argparse
 import json
 import os
 import sys
 import urllib.error
 import urllib.request
+
+_KINDS = {"image", "scene"}
 
 # Stash, reached from where the scraper runs (Stash invokes us in-process, so localhost).
 STASH_URL = os.environ.get("STASH_URL", "http://localhost:9999").rstrip("/")
@@ -82,6 +86,10 @@ def _resolve_base() -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(prog="stash-performer-id-scrape")
+    parser.add_argument("--kind", choices=sorted(_KINDS), default="image")
+    args = parser.parse_args()
+
     base = _resolve_base()  # resolved per invocation (lazy — keeps import side-effect-free)
     timeout = float(os.environ.get("STASH_PERFORMER_ID_TIMEOUT", "15"))
     raw = sys.stdin.read()
@@ -93,7 +101,7 @@ def main() -> None:
         return
 
     req = urllib.request.Request(
-        f"{base}/scrape/image",
+        f"{base}/scrape/{args.kind}",
         data=json.dumps(fragment).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -108,7 +116,7 @@ def main() -> None:
         print(json.dumps({"performers": []}))
         return
 
-    # Pass the service's ScrapedImage through verbatim (already the right shape).
+    # Pass the service's ScrapedImage/ScrapedScene through verbatim (already the right shape).
     sys.stdout.write(body)
 
 

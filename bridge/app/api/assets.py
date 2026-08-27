@@ -11,6 +11,9 @@ router = APIRouter(prefix="/assets")
 _SCOPES = {"gallery", "folder", "file"}
 
 
+_ENTITY_TYPES = {"image", "scene"}
+
+
 @router.get("")
 def list_assets(
     type: str = Query("gallery"),
@@ -18,16 +21,22 @@ def list_assets(
     sort: str = "path",
     order: str = "asc",
     assigned: str | None = None,  # "assigned" | "unassigned" | None (all)
+    entity_type: str | None = None,  # narrow the file scope: "image" | "scene"
     limit: int = 100,
     offset: int = 0,
     db: Database = Depends(get_db),
 ) -> dict:
     if type not in _SCOPES:
         raise HTTPException(status_code=400, detail=f"type must be one of {sorted(_SCOPES)}")
+    if entity_type is not None and entity_type not in _ENTITY_TYPES:
+        raise HTTPException(
+            status_code=400, detail=f"entity_type must be one of {sorted(_ENTITY_TYPES)}"
+        )
     return {
-        "total": db.count_assets(type, q=q, assigned=assigned),
+        "total": db.count_assets(type, q=q, assigned=assigned, entity_type=entity_type),
         "assets": db.list_assets(
-            type, q=q, sort=sort, order=order, assigned=assigned, limit=limit, offset=offset
+            type, q=q, sort=sort, order=order, assigned=assigned,
+            limit=limit, offset=offset, entity_type=entity_type,
         ),
     }
 

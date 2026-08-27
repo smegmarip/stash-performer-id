@@ -1,9 +1,10 @@
 name: Stash Performer ID
-# Image scraper for the stash-performer-id metadata provider.
+# Image/scene scraper for the stash-performer-id metadata provider.
 #
-# Associates images with performers discovered by the service's name DB. Stash pipes the image
-# fragment to the transport script on stdin; the script POSTs it to the service /scrape/image and
-# prints a ScrapedImage back. This is Step 2's association vehicle (docs/IMAGE_TAGGER_FEASIBILITY.md).
+# Associates images and scenes with performers discovered by the service's name DB. Stash pipes the
+# fragment to the transport script on stdin; the `--kind` arg selects the service endpoint
+# (/scrape/image or /scrape/scene), and the script prints a ScrapedImage/ScrapedScene back. This is
+# Step 2's association vehicle (docs/IMAGE_TAGGER_FEASIBILITY.md).
 #
 # Install: copy this dir into Stash's `scrapers/` folder, then Settings -> Metadata Providers ->
 # Scrapers -> Reload. The transport reads the service URL from STASH_PERFORMER_ID_URL
@@ -13,3 +14,12 @@ imageByFragment:
   script:
     - python3
     - stash-performer-id-scrape.py
+    - --kind
+    - image
+sceneByFragment:
+  action: script
+  script:
+    - python3
+    - stash-performer-id-scrape.py
+    - --kind
+    - scene

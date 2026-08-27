@@ -17,6 +17,11 @@ const ASSIGNED = [
   { key: "assigned", label: "Assigned" },
   { key: "unassigned", label: "Unassigned" },
 ] as const;
+// File assets are either images or scenes; this sub-filter is only shown for the File scope.
+const ENTITY_TYPES = [
+  { key: "image", label: "Image", icon: "icon-[tabler--photo]" },
+  { key: "scene", label: "Scene", icon: "icon-[tabler--movie]" },
+] as const;
 const SORTS = [
   { key: "path", label: "Path" },
   { key: "name", label: "Name" },
@@ -33,6 +38,7 @@ export default function AssetsView() {
   const [sort, setSort] = useUrlState("sort", "path");
   const [order, setOrder] = useUrlState("order", "asc");
   const [assigned, setAssigned] = useUrlState("assigned", "all");
+  const [entity, setEntity] = useUrlState("entity", "image");
   const [validNames, setValidNames] = useState<NameRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +54,7 @@ export default function AssetsView() {
           sort,
           order,
           assigned: assigned === "all" ? undefined : assigned,
+          entity_type: scope === "file" ? entity : undefined,
           limit: PAGE,
           offset,
         }),
@@ -59,7 +66,7 @@ export default function AssetsView() {
     } catch (e) {
       setError(String(e));
     }
-  }, [scope, q, sort, order, assigned, offset]);
+  }, [scope, q, sort, order, assigned, entity, offset]);
 
   useEffect(() => {
     void refresh();
@@ -147,6 +154,21 @@ export default function AssetsView() {
               </button>
             ))}
           </div>
+          {scope === "file" && (
+            <div className="join">
+              {ENTITY_TYPES.map((e) => (
+                <button
+                  key={e.key}
+                  type="button"
+                  className={`join-item btn btn-sm ${entity === e.key ? "btn-primary" : "btn-soft"}`}
+                  onClick={() => reset(() => setEntity(e.key))}
+                >
+                  <span className={`${e.icon} size-4`} />
+                  {e.label}
+                </button>
+              ))}
+            </div>
+          )}
           <select
             className="select select-sm ms-auto max-w-36"
             value={sort}

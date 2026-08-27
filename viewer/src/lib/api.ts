@@ -89,6 +89,7 @@ type AssetQuery = {
   sort?: string;
   order?: string;
   assigned?: string;
+  entity_type?: string; // narrow the file scope: "image" | "scene"
   limit?: number;
   offset?: number;
 };
@@ -141,7 +142,11 @@ export const api = {
       body: JSON.stringify({ name, disambiguation }),
     }),
   harvestGalleries: () =>
-    req<{ galleries: number; new_names: number }>("/harvest/galleries", { method: "POST" }),
+    req<{ galleries: number; images: number; new_names: number }>("/harvest/galleries", {
+      method: "POST",
+    }),
+  harvestScenes: () =>
+    req<{ scenes: number; new_names: number }>("/harvest/scenes", { method: "POST" }),
   listAssets: (o: AssetQuery) => {
     const p = new URLSearchParams({
       type: o.type,
@@ -152,6 +157,7 @@ export const api = {
     });
     if (o.q) p.set("q", o.q);
     if (o.assigned) p.set("assigned", o.assigned);
+    if (o.entity_type) p.set("entity_type", o.entity_type);
     return req<AssetPage>(`/assets?${p.toString()}`);
   },
   activate: (assetId: number, nameId: number, sourceLevel: Scope) =>

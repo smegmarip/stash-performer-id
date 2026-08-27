@@ -63,6 +63,45 @@ def test_scrape_unassigned_image_returns_empty(ctx):
     assert lone  # asset exists but carries no active name
 
 
+def _add_scene(db, folder_path, scene_stash_id, scene_path, folder_name):
+    """A folder + a scene file linked by folder_image, with a folder-name candidate; activation of
+    the folder cascades onto the scene (mirrors harvest_scenes)."""
+    folder = db.upsert_asset("folder", path=folder_path, basename=folder_name)
+    db.add_candidate(folder, folder_name, "folder")
+    scene = db.upsert_asset(
+        "file", stash_entity_type="scene", stash_id=scene_stash_id, path=scene_path
+    )
+    db.add_relationship(folder, scene, "folder_image")
+    db.commit()
+    db.rebuild_names()
+    nid = next(n["id"] for n in db.list_names() if n["name"] == folder_name)
+    db.activate_name(folder, nid, "folder")  # cascades onto the scene
+    return scene, nid
+
+
+def test_scrape_scene_by_id(ctx):
+    db, client, _ = ctx
+    _scene, nid = _add_scene(db, "/lib/Scene Star", "s1", "/lib/Scene Star/clip.mp4", "Scene Star")
+    body = client.post("/scrape/scene", json={"id": "s1", "files": []}).json()
+    assert body["performers"] == [{"name": "Scene Star", "remote_site_id": str(nid)}]
+
+
+def test_scrape_scene_falls_back_to_path(ctx):
+    db, client, _ = ctx
+    _scene, nid = _add_scene(db, "/lib/Scene Star", "s1", "/lib/Scene Star/clip.mp4", "Scene Star")
+    body = client.post(
+        "/scrape/scene", json={"id": "999", "files": [{"path": "/lib/Scene Star/clip.mp4"}]}
+    ).json()
+    assert body["performers"][0]["remote_site_id"] == str(nid)
+
+
+def test_scrape_scene_id_does_not_match_image(ctx):
+    # The id branch is entity_type-scoped: an image id posted to /scrape/scene must not resolve.
+    _db, client, _nid = ctx
+    body = client.post("/scrape/scene", json={"id": "i1", "files": []}).json()
+    assert body == {"performers": []}
+
+
 def test_scrape_merges_enrichment_profile(ctx):
     db, client, nid = ctx
     db.apply_enrichment_profile(

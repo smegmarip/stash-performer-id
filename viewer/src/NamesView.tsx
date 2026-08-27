@@ -110,7 +110,13 @@ export default function NamesView() {
             type="button"
             className="btn btn-primary btn-sm"
             disabled={busy}
-            onClick={() => void withBusy(api.harvestGalleries)}
+            onClick={() =>
+              void withBusy(async () => {
+                // One button harvests both galleries (→ images) and scenes.
+                await api.harvestGalleries();
+                await api.harvestScenes();
+              })
+            }
           >
             <span className="icon-[tabler--download] size-4" />
             Harvest
