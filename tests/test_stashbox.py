@@ -112,3 +112,21 @@ def test_stashbox_search_and_find(tmp_path, monkeypatch):
 
 def test_stashbox_schema_builds():
     _schema()  # catches invalid Strawberry type wiring
+
+
+def test_stashbox_scene_queries_are_noop():
+    # The scene surface exists only so the scene tagger's queries validate (rather than erroring
+    # with "Unknown type 'Scene'"); it always returns empty — we match scenes via the script scraper.
+    schema = _schema()
+    r = schema.execute_sync(
+        'query($fp: [[FingerprintQueryInput!]!]!) {'
+        " findScenesBySceneFingerprints(fingerprints: $fp) { id title performers { performer { id } } }"
+        " }",
+        variable_values={"fp": [[{"hash": "abc", "algorithm": "PHASH"}]]},
+    )
+    assert r.errors is None
+    assert r.data["findScenesBySceneFingerprints"] == [[]]  # one empty match set per input scene
+
+    r2 = schema.execute_sync('{ searchScene(term: "anything") { id } findScene(id: "1") { id } }')
+    assert r2.errors is None
+    assert r2.data == {"searchScene": [], "findScene": None}

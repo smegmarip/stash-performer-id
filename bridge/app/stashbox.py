@@ -234,6 +234,84 @@ def _by_id(db, name_id: int) -> Performer | None:
     return _to_performer(name_id, name["name"], name.get("disambiguation"), profile)
 
 
+# ─── stash-box Scene surface (no-op) ─────────────────────────────────────────
+# Stash's scene tagger queries a stash-box by fingerprint (FindScenesBySceneFingerprints /
+# SearchScene / FindSceneByID). Our provider associates scenes by path/id via the *script* scraper
+# (sceneByFragment), not by fingerprint, so it has no scene data to return. We still define these
+# types and queries so those requests VALIDATE and return empty, instead of erroring with
+# "Unknown type 'Scene'"/"Cannot query field 'findScenesBySceneFingerprints'" in the tagger UI.
+
+
+@strawberry.enum
+class FingerprintAlgorithm(Enum):
+    MD5 = "MD5"
+    OSHASH = "OSHASH"
+    PHASH = "PHASH"
+
+
+@strawberry.input
+class FingerprintQueryInput:
+    hash: str
+    algorithm: FingerprintAlgorithm
+
+
+@strawberry.type
+class TagCategory:
+    id: strawberry.ID
+    name: str
+    description: str | None = None
+
+
+@strawberry.type
+class Tag:
+    id: strawberry.ID
+    name: str
+    description: str | None = None
+    aliases: list[str] = strawberry.field(default_factory=list)
+    category: TagCategory | None = None
+
+
+@strawberry.type
+class Studio:
+    id: strawberry.ID
+    name: str
+    aliases: list[str] = strawberry.field(default_factory=list)
+    urls: list[URL] = strawberry.field(default_factory=list)
+    images: list[Image] = strawberry.field(default_factory=list)
+    parent: Studio | None = None
+
+
+@strawberry.type
+class PerformerAppearance:
+    performer: Performer
+    as_: str | None = strawberry.field(name="as", default=None)
+
+
+@strawberry.type
+class Fingerprint:
+    hash: str
+    algorithm: FingerprintAlgorithm
+    duration: int | None = None
+    submissions: int | None = None
+
+
+@strawberry.type
+class Scene:
+    id: strawberry.ID
+    title: str | None = None
+    code: str | None = None
+    details: str | None = None
+    director: str | None = None
+    duration: int | None = None
+    date: str | None = None
+    urls: list[URL] = strawberry.field(default_factory=list)
+    images: list[Image] = strawberry.field(default_factory=list)
+    studio: Studio | None = None
+    tags: list[Tag] = strawberry.field(default_factory=list)
+    performers: list[PerformerAppearance] = strawberry.field(default_factory=list)
+    fingerprints: list[Fingerprint] = strawberry.field(default_factory=list)
+
+
 @strawberry.type
 class Query:
     @strawberry.field
@@ -260,3 +338,19 @@ class Query:
     @strawberry.field(name="findPerformer")
     def find_performer(self, id: strawberry.ID) -> Performer | None:
         return _by_id(get_db(), int(id)) if str(id).strip().isdigit() else None
+
+    # --- Scene surface: no-op (see the "stash-box Scene surface" note above). ---
+    @strawberry.field(name="findScenesBySceneFingerprints")
+    def find_scenes_by_scene_fingerprints(
+        self, fingerprints: list[list[FingerprintQueryInput]]
+    ) -> list[list[Scene]]:
+        # One (empty) match set per queried scene — no fingerprint DB to match against.
+        return [[] for _ in fingerprints]
+
+    @strawberry.field(name="searchScene")
+    def search_scene(self, term: str) -> list[Scene]:
+        return []
+
+    @strawberry.field(name="findScene")
+    def find_scene(self, id: strawberry.ID) -> Scene | None:
+        return None
