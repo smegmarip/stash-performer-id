@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./lib/api";
 import type { AssetRow, NameRow, Scope } from "./lib/api";
@@ -41,9 +41,11 @@ export default function AssetsView() {
   const [assigned, setAssigned] = useUrlState("assigned", "all");
   const [entity, setEntity] = useUrlState("entity", "image");
   const [validNames, setValidNames] = useState<NameRow[]>([]);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const q = useDebounced(search);
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -64,6 +66,7 @@ export default function AssetsView() {
       setAssets(page.assets);
       setTotal(page.total);
       setValidNames(names.names);
+      setSelected(new Set()); // selection is per-view; drop it whenever the list reloads
     } catch (e) {
       setError(String(e));
     }
@@ -91,6 +94,39 @@ export default function AssetsView() {
     fn();
   };
   const assignedCount = assets.filter((a) => a.active).length;
+
+  // --- batch selection ---
+  const allChecked = assets.length > 0 && assets.every((a) => selected.has(a.asset_id));
+  const someChecked = assets.some((a) => selected.has(a.asset_id));
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someChecked && !allChecked;
+  }, [someChecked, allChecked]);
+
+  const toggleAll = () =>
+    setSelected(allChecked ? new Set() : new Set(assets.map((a) => a.asset_id)));
+  const toggleOne = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // Apply one action to every selected asset (sequentially — the DB is a single shared connection).
+  const batchAssign = (nameId: number) => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    void withBusy(async () => {
+      for (const id of ids) await api.activate(id, nameId, scope);
+    });
+  };
+  const batchClear = () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    void withBusy(async () => {
+      for (const id of ids) await api.deactivate(id);
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -192,11 +228,52 @@ export default function AssetsView() {
           <PerPage value={perPage} onChange={(n) => reset(() => setPerPage(n))} disabled={busy} />
         </div>
 
+        {/* Batch assignment menu — acts on the checked rows. */}
+        <div className="card-header border-base-content/10 flex flex-wrap items-center gap-3 border-t">
+          <span className="text-sm">
+            <span className="font-medium">{selected.size}</span> selected
+          </span>
+          <AssignCombobox
+            active={null}
+            options={validNames}
+            disabled={busy || selected.size === 0}
+            onAssign={batchAssign}
+            onClear={() => undefined}
+          />
+          <button
+            type="button"
+            className="btn btn-soft btn-sm"
+            disabled={busy || selected.size === 0}
+            onClick={batchClear}
+          >
+            <span className="icon-[tabler--x] size-4" />
+            Clear assignment
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm ms-auto"
+            disabled={busy || selected.size === 0}
+            onClick={() => setSelected(new Set())}
+          >
+            Deselect all
+          </button>
+        </div>
+
         <div className="card-body p-0">
           <div>
             <table className="table">
               <thead>
                 <tr>
+                  <th className="w-0">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      className="checkbox checkbox-sm"
+                      aria-label="Select all"
+                      checked={allChecked}
+                      onChange={toggleAll}
+                    />
+                  </th>
                   <th className="w-0"></th>
                   <th>Name</th>
                   <th className="text-center">Images</th>
@@ -205,7 +282,16 @@ export default function AssetsView() {
               </thead>
               <tbody>
                 {assets.map((a) => (
-                  <tr key={a.asset_id}>
+                  <tr key={a.asset_id} className={selected.has(a.asset_id) ? "bg-base-200/50" : undefined}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        className="checkbox checkbox-sm"
+                        aria-label={`Select ${a.basename ?? a.asset_id}`}
+                        checked={selected.has(a.asset_id)}
+                        onChange={() => toggleOne(a.asset_id)}
+                      />
+                    </td>
                     <td>
                       {a.thumb_stash_id ? (
                         <div className="avatar">
@@ -255,7 +341,7 @@ export default function AssetsView() {
                 ))}
                 {assets.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="text-base-content/50 py-8 text-center">
+                    <td colSpan={5} className="text-base-content/50 py-8 text-center">
                       No {scope} assets.
                     </td>
                   </tr>
