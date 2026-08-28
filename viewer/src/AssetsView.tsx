@@ -276,7 +276,7 @@ export default function AssetsView() {
                   </th>
                   <th className="w-0"></th>
                   <th>Name</th>
-                  <th className="text-center">Images</th>
+                  <th className="text-center">Files</th>
                   <th>Assignment</th>
                 </tr>
               </thead>
@@ -315,7 +315,7 @@ export default function AssetsView() {
                       <div className="flex flex-col">
                         <span className="font-medium">{a.basename ?? `#${a.asset_id}`}</span>
                         {a.path && (
-                          <span className="text-base-content/40 max-w-md truncate text-xs">
+                          <span className="text-base-content/40 max-w-lg truncate text-xs">
                             {a.path}
                           </span>
                         )}
