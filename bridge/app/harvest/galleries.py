@@ -6,7 +6,7 @@ activation can cascade onto its images).
 import os
 
 from bridge.app.cache.db import Database
-from bridge.app.harvest.normalize import candidate
+from bridge.app.harvest.normalize import candidate_parts
 from bridge.app.stash.client import StashClient
 
 _GALLERIES_QUERY = """
@@ -114,8 +114,10 @@ def _harvest_one(db: Database, stash: StashClient, g: dict) -> int:
     )
 
     gallery_name_src = g.get("title") or _basename_no_ext(g_path)
-    if gallery_name_src and (cand := candidate(gallery_name_src)):
-        db.add_candidate(gallery_asset_id, cand, "gallery", gallery_name_src)
+    if gallery_name_src and (cand := candidate_parts(gallery_name_src)):
+        db.add_candidate(
+            gallery_asset_id, cand[0], "gallery", gallery_name_src, disambiguation=cand[1]
+        )
 
     return _harvest_gallery_images(db, stash, str(g["id"]), gallery_asset_id)
 
@@ -162,8 +164,14 @@ def _harvest_gallery_images(
                         "folder", path=parent, basename=_basename_no_ext(parent)
                     )
                     folder_cache[parent] = folder_asset_id
-                    if (fcand := candidate(_basename_no_ext(parent) or "")):
-                        db.add_candidate(folder_asset_id, fcand, "folder", parent)
+                    if (fcand := candidate_parts(_basename_no_ext(parent) or "")):
+                        db.add_candidate(
+                            folder_asset_id,
+                            fcand[0],
+                            "folder",
+                            parent,
+                            disambiguation=fcand[1],
+                        )
                     # link gallery -> folder (candidate inheritance)
                     db.add_relationship(gallery_asset_id, folder_asset_id, "gallery_folder")
                 db.add_relationship(folder_asset_id, image_asset_id, "folder_image")

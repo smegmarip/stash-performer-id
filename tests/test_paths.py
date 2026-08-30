@@ -34,3 +34,12 @@ def test_non_image_files_ignored(tmp_path):
     result = harvest_path(db, str(tmp_path))
     db.close()
     assert result["files"] == 0
+
+
+def test_trailing_paren_becomes_disambiguation(tmp_path):
+    _touch(tmp_path / "Abi Beckham (Alabama)" / "001.jpg")
+    db = Database(":memory:")
+    harvest_path(db, str(tmp_path))
+    rows = db.list_names(q="beckham")
+    db.close()
+    assert [(r["name"], r["disambiguation"]) for r in rows] == [("Abi Beckham", "Alabama")]

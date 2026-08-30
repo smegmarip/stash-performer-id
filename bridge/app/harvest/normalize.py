@@ -44,3 +44,27 @@ def candidate(raw: str) -> str | None:
     if not tokens:
         return None
     return " ".join(tokens)
+
+
+# A trailing "(qualifier)" — source folders are named "<name> (Abbreviated School)", e.g.
+# "Jane Doe (Alabama)"; the qualifier is not part of the name.
+_TRAILING_PAREN = re.compile(r"\(([^()]*)\)\s*$")
+
+
+def split_disambiguation(raw: str) -> tuple[str, str]:
+    """Peel a trailing parenthesized qualifier off `raw`: ("Jane Doe ", "Alabama")."""
+    m = _TRAILING_PAREN.search(raw or "")
+    if not m:
+        return raw or "", ""
+    return raw[: m.start()], m.group(1).strip()
+
+
+def candidate_parts(raw: str) -> tuple[str, str] | None:
+    """(gated name, disambiguation) for `raw`, or None if no name survives the gate.
+
+    The disambiguation is the trailing parenthesized qualifier, verbatim (trimmed) — it
+    flows to `names.disambiguation`, never into the name.
+    """
+    base, disambiguation = split_disambiguation(raw)
+    name = candidate(base)
+    return (name, disambiguation) if name else None

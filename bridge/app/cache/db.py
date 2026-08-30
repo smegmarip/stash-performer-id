@@ -211,12 +211,17 @@ class Database:
         )
 
     def add_candidate(
-        self, asset_id: int, name: str, source: str, original_name: str | None = None
+        self,
+        asset_id: int,
+        name: str,
+        source: str,
+        original_name: str | None = None,
+        disambiguation: str = "",
     ) -> None:
         self.conn.execute(
-            "INSERT OR IGNORE INTO name_candidate(asset_id, name, original_name, source,"
-            " evaluation_time) VALUES (?, ?, ?, ?, ?)",
-            (asset_id, name, original_name, source, _now()),
+            "INSERT OR IGNORE INTO name_candidate(asset_id, name, original_name,"
+            " disambiguation, source, evaluation_time) VALUES (?, ?, ?, ?, ?, ?)",
+            (asset_id, name, original_name, disambiguation, source, _now()),
         )
 
     def commit(self) -> None:
@@ -232,7 +237,7 @@ class Database:
         # valid defaults to 1 (valid-by-default; triage invalidates the junk).
         cur = self.conn.execute(
             """INSERT OR IGNORE INTO names(name, disambiguation)
-               SELECT DISTINCT name, '' FROM name_candidate"""
+               SELECT DISTINCT name, COALESCE(disambiguation, '') FROM name_candidate"""
         )
         self.conn.commit()
         return cur.rowcount

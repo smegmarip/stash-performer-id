@@ -10,7 +10,7 @@ performer-named folder can carry its name down to every scene (and image) it con
 import os
 
 from bridge.app.cache.db import Database
-from bridge.app.harvest.normalize import candidate
+from bridge.app.harvest.normalize import candidate_parts
 from bridge.app.stash.client import StashClient
 
 _SCENES_QUERY = """
@@ -95,8 +95,10 @@ def _harvest_one(db: Database, s: dict, folder_cache: dict[str, int]) -> None:
 
     # File-level candidate from the scene title (preferred, usually cleaner) else the filename.
     name_src = s.get("title") or basename
-    if name_src and (cand := candidate(name_src)):
-        db.add_candidate(scene_asset_id, cand, "file", name_src)
+    if name_src and (cand := candidate_parts(name_src)):
+        db.add_candidate(
+            scene_asset_id, cand[0], "file", name_src, disambiguation=cand[1]
+        )
 
     if not path:
         return
@@ -107,7 +109,9 @@ def _harvest_one(db: Database, s: dict, folder_cache: dict[str, int]) -> None:
             "folder", path=parent, basename=_basename_no_ext(parent)
         )
         folder_cache[parent] = folder_asset_id
-        if fcand := candidate(_basename_no_ext(parent) or ""):
-            db.add_candidate(folder_asset_id, fcand, "folder", parent)
+        if fcand := candidate_parts(_basename_no_ext(parent) or ""):
+            db.add_candidate(
+                folder_asset_id, fcand[0], "folder", parent, disambiguation=fcand[1]
+            )
     # Reuse the gallery cascade kind: folder activation reaches its member files (images + scenes).
     db.add_relationship(folder_asset_id, scene_asset_id, "folder_image")

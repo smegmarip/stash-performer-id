@@ -9,7 +9,7 @@ not a subject).
 import os
 
 from bridge.app.cache.db import Database
-from bridge.app.harvest.normalize import candidate
+from bridge.app.harvest.normalize import candidate_parts
 
 IMAGE_EXTS = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
@@ -24,11 +24,11 @@ def harvest_path(db: Database, root: str, image_exts: set[str] = IMAGE_EXTS) -> 
     for dirpath, _dirnames, filenames in os.walk(root):
         is_root = os.path.abspath(dirpath) == root
         base = os.path.basename(dirpath.rstrip("/"))
-        folder_cand = None if is_root else candidate(base)
+        folder_cand = None if is_root else candidate_parts(base)
 
         if folder_cand:
             fid = db.upsert_asset("folder", path=dirpath, basename=base)
-            db.add_candidate(fid, folder_cand, "folder", base)
+            db.add_candidate(fid, folder_cand[0], "folder", base, disambiguation=folder_cand[1])
             folders += 1
         else:
             # Unnamed folder (or root): collapse to image filenames.
@@ -36,14 +36,14 @@ def harvest_path(db: Database, root: str, image_exts: set[str] = IMAGE_EXTS) -> 
                 stem, ext = os.path.splitext(fn)
                 if ext.lower() not in image_exts:
                     continue
-                if (fc := candidate(stem)):
+                if (fc := candidate_parts(stem)):
                     aid = db.upsert_asset(
                         "file",
                         stash_entity_type="image",
                         path=os.path.join(dirpath, fn),
                         basename=stem,
                     )
-                    db.add_candidate(aid, fc, "file", stem)
+                    db.add_candidate(aid, fc[0], "file", stem, disambiguation=fc[1])
                     files += 1
         db.commit()
 

@@ -1,4 +1,4 @@
-from bridge.app.harvest.normalize import candidate, tokenize
+from bridge.app.harvest.normalize import candidate, candidate_parts, tokenize
 
 
 class TestNames:
@@ -64,3 +64,22 @@ class TestTokenize:
     def test_trailing_apostrophe_not_joined(self):
         # An apostrophe with no following letter is just a separator (no dangling token).
         assert tokenize("Jennifer O' Dell") == ["Jennifer", "Dell"]
+
+
+class TestCandidateParts:
+    def test_trailing_paren_to_disambiguation(self):
+        assert candidate_parts("Liz Gregorski (Wisconsin)") == ("Liz Gregorski", "Wisconsin")
+        assert candidate_parts("Jane Doe (UVA)") == ("Jane Doe", "UVA")
+
+    def test_no_paren_passthrough(self):
+        assert candidate_parts("Jane Doe") == ("Jane Doe", "")
+
+    def test_paren_only_yields_no_candidate(self):
+        assert candidate_parts("(UVA)") is None
+
+    def test_only_trailing_paren_is_peeled(self):
+        # Mid-string parens stay in the name; only the trailing qualifier is peeled.
+        assert candidate_parts("Jane (JJ) Doe (App State)") == ("Jane JJ Doe", "App State")
+
+    def test_gate_still_applies_to_name(self):
+        assert candidate_parts("0001 (Alabama)") is None  # digits-only name gated out
