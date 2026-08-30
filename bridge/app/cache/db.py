@@ -461,15 +461,48 @@ class Database:
         return out
 
     def _cascade_targets(self, asset_id: int) -> list[int]:
-        """The asset itself plus, for a gallery/folder, its member images (cascade set).
+        """The asset itself plus its cascade set.
 
-        A file cascades to only itself.
+        - gallery → its member images.
+        - folder → every descendant **folder** (by path) and every image under the folder or any
+          of those descendants, so activating a parent folder is inherited by the whole subtree.
+        - file → only itself.
         """
-        targets = [asset_id]
         row = self.conn.execute(
-            "SELECT resource_type FROM asset WHERE id = ?", (asset_id,)
+            "SELECT resource_type, path FROM asset WHERE id = ?", (asset_id,)
         ).fetchone()
-        kind = self._CASCADE_KIND.get(row["resource_type"]) if row else None
+        if not row:
+            return [asset_id]
+
+        if row["resource_type"] == "folder":
+            # Descendant folders: any folder asset whose path sits under this one. LIKE wildcards
+            # (%, _) in a path are escaped so a literal path can't widen the match.
+            folder_ids = [asset_id]
+            if row["path"]:
+                esc = (
+                    row["path"].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                )
+                folder_ids += [
+                    r["id"]
+                    for r in self.conn.execute(
+                        "SELECT id FROM asset WHERE resource_type = 'folder'"
+                        " AND path LIKE ? ESCAPE '\\'",
+                        (esc + "/%",),
+                    )
+                ]
+            placeholders = ",".join("?" * len(folder_ids))
+            images = [
+                r["child_asset_id"]
+                for r in self.conn.execute(
+                    "SELECT DISTINCT child_asset_id FROM asset_relationship"
+                    f" WHERE kind = 'folder_image' AND parent_asset_id IN ({placeholders})",
+                    folder_ids,
+                )
+            ]
+            return list(dict.fromkeys(folder_ids + images))
+
+        targets = [asset_id]
+        kind = self._CASCADE_KIND.get(row["resource_type"])
         if kind:
             targets += [
                 r["child_asset_id"]

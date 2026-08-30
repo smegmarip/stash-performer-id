@@ -83,3 +83,51 @@ def test_set_valid_bulk(db):
     assert db.set_valid_bulk([], False) == 0  # no-op on empty
     assert db.set_valid_bulk(ids, True) == 3  # restore all
     assert db.list_names(status="invalid") == []
+
+
+def test_activation_cascades_to_child_folders(db):
+    # Parent name folder with a nested subtree: .../Blair Green (UKY)/{P, P/instagram}, images
+    # linked to every ancestor (as the harvest does). Activating the parent must be inherited by
+    # the child folders and every image in the subtree.
+    root = "/data/pics/exposed/ncaa/Basketball/Blair Green (UKY)"
+    parent = db.upsert_asset("folder", path=root, basename="Blair Green (UKY)")
+    sub_p = db.upsert_asset("folder", path=f"{root}/P", basename="P")
+    sub_ig = db.upsert_asset("folder", path=f"{root}/P/instagram", basename="instagram")
+    img = db.upsert_asset(
+        "file", stash_entity_type="image", stash_id="i1",
+        path=f"{root}/P/instagram/img.jpg", basename="img",
+    )
+    # Harvest links every ancestor folder directly to the image.
+    for f in (parent, sub_p, sub_ig):
+        db.add_relationship(f, img, "folder_image")
+
+    nid = db.add_direct_name("Blair Green")["id"]
+    affected = db.activate_name(parent, nid, "folder")
+
+    # parent + 2 child folders + 1 image
+    assert affected == 4
+    for asset in (parent, sub_p, sub_ig):
+        r = db.conn.execute(
+            "SELECT name_id FROM name_relationship WHERE asset_id=? AND active=1", (asset,)
+        ).fetchone()
+        assert r and r["name_id"] == nid
+    assert db.lookup_active_name(stash_id="i1")["name"] == "Blair Green"
+
+    # Deactivating the parent tears the whole subtree down again.
+    db.deactivate_asset(parent)
+    assert db.lookup_active_name(stash_id="i1") is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM name_relationship WHERE active=1"
+    ).fetchone()["n"] == 0
+
+
+def test_activation_folder_prefix_does_not_leak_to_siblings(db):
+    # "/lib/Ann" must not cascade into "/lib/Anna" (path-prefix must respect the separator).
+    ann = db.upsert_asset("folder", path="/lib/Ann", basename="Ann")
+    anna_child = db.upsert_asset("folder", path="/lib/Anna/x", basename="x")
+    nid = db.add_direct_name("Ann")["id"]
+    db.activate_name(ann, nid, "folder")
+    leaked = db.conn.execute(
+        "SELECT 1 FROM name_relationship WHERE asset_id=? AND active=1", (anna_child,)
+    ).fetchone()
+    assert leaked is None
