@@ -45,7 +45,7 @@ def _run_search(db: Database, name_id: int, source: str, refresh: bool = False) 
 
     error: str | None = None
     try:
-        results = provider.search(term)
+        results = provider.search(term, disambiguation=name.get("disambiguation") or None)
         db.replace_candidates(
             name_id,
             source,

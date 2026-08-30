@@ -95,7 +95,9 @@ class BabepediaProvider:
             raise ProviderError(f"babepedia (flaresolverr): {e}") from e
         return _FSResp(sol.get("response", ""), sol.get("status", 200))
 
-    def search(self, term: str) -> list[PerformerData]:
+    def search(
+        self, term: str, disambiguation: str | None = None
+    ) -> list[PerformerData]:
         try:
             resp = self._get(f"{_BASE}/ajax-search.php", params={"term": term.replace("-", " ")})
             resp.raise_for_status()

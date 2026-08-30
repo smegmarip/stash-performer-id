@@ -82,7 +82,7 @@ class FakeProvider:
     def __init__(self):
         self.calls = 0
 
-    def search(self, term):
+    def search(self, term, disambiguation=None):
         self.calls += 1
         return [
             PerformerData(source=self.id, source_entity_id="x1", name=term, country="UK")
@@ -116,7 +116,7 @@ class _ErrorProvider:
     def __init__(self):
         self.calls = 0
 
-    def search(self, term):
+    def search(self, term, disambiguation=None):
         self.calls += 1
         raise ProviderError("boom")
 
@@ -129,7 +129,7 @@ class _EmptyProvider:
     def __init__(self):
         self.calls = 0
 
-    def search(self, term):
+    def search(self, term, disambiguation=None):
         self.calls += 1
         return []
 
@@ -870,3 +870,86 @@ def test_profile_custom_fields_round_trip(ctx):
 def test_ncaa_blocked_raises_provider_error():
     with pytest.raises(ProviderError, match="Akamai"):
         _ncaa(_FakeNcaaClient(search_status=403)).search("x")
+
+
+_NCAA_SEARCH_PAGE = (
+    "<html>search page"
+    '<select id=\\"org_id_filter\\"><option value=\\"\\">Filter by team</option>'
+    '<option value=\\"8\\">Alabama</option>'
+    '<option value=\\"327\\">Kansas St.</option></select></html>'
+)
+
+
+class _FakeOrgClient(_FakeNcaaClient):
+    """Serves the org <select> on the search page and records data-endpoint params."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.data_params = []
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        if "/search/players/data" in url:
+            self.data_params.append(dict(params or {}))
+            return _NcaaResp(json_data=_NCAA_ROWS)
+        if "/search/players" in url:
+            return _NcaaResp(text=_NCAA_SEARCH_PAGE)
+        return super().get(url, params, headers, timeout)
+
+
+def test_ncaa_school_hint_filters_by_org():
+    client = _FakeOrgClient()
+    out = _ncaa(client).search("Liz Gregorski", disambiguation="Kansas St.")
+    assert client.data_params[0]["org_id_filter"] == "327"  # resolved from the org select
+    assert len(client.data_params) == 1  # rows came back filtered: no unfiltered retry
+    assert out[0].source_entity_id == "8905834"
+
+
+def test_ncaa_unresolvable_hint_searches_unfiltered():
+    client = _FakeOrgClient()
+    out = _ncaa(client).search("Liz Gregorski", disambiguation="UVA")
+    assert client.data_params[0]["org_id_filter"] == ""  # hint unused, single search
+    assert len(out) == 2
+
+
+def test_ncaa_school_hint_site_fallback_for_uncovered_sport():
+    # No stats.ncaa.org rows (e.g. dance) -> scan the school site's rosters by name.
+    home = '<html><a href="/sports/dance/roster">Dance</a></html>'
+    roster = '<html><a href="/sports/dance/roster/abi-beckham/44">Abi Beckham</a></html>'
+    bio = (
+        '<html><head><meta property="og:image" content="https://tide.test/abi.jpg"></head>'
+        "<body><span>Hometown</span><span>Mobile, AL</span></body></html>"
+    )
+
+    class _Client(_FakeOrgClient):
+        def get(self, url, params=None, headers=None, timeout=None):
+            if "/search/players/data" in url:
+                self.data_params.append(dict(params or {}))
+                return _NcaaResp(json_data={"aaData": []})
+            if "web3.ncaa.org/directory" in url:
+                return _NcaaResp(
+                    json_data=[
+                        {
+                            "orgId": 8,
+                            "nameOfficial": "University of Alabama",
+                            "athleticWebUrl": "tide.test",
+                        }
+                    ]
+                )
+            if url.rstrip("/") == "https://tide.test":
+                return _NcaaResp(text=home)
+            if "tide.test/sports/dance/roster/abi-beckham/44" in url:
+                return _NcaaResp(text=bio)
+            if "tide.test/sports/dance/roster" in url:
+                return _NcaaResp(text=roster)
+            return super().get(url, params, headers, timeout)
+
+    out = _ncaa(_Client()).search("Abi Beckham", disambiguation="Alabama")
+    assert len(out) == 1
+    r = out[0]
+    assert r.source_entity_id == "/sports/dance/roster/abi-beckham/44"
+    assert r.name == "Abi Beckham"
+    assert r.disambiguation == "University of Alabama Dance"
+    assert r.images == ["https://tide.test/abi.jpg"]
+    assert r.custom_fields["ncaa_hometown"] == "Mobile, AL"
+    assert r.country == "US"  # AL -> US state
+    assert "https://tide.test/sports/dance/roster/abi-beckham/44" in r.urls

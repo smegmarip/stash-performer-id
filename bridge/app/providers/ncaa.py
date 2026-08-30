@@ -65,6 +65,14 @@ _PLACEHOLDER_IMG = re.compile(r"default|placeholder|missing|/logos?/", re.I)
 _NAV_ROSTER = re.compile(
     r'href="(?:https?://[^"/]+)?/sports/([a-z0-9-]+)(?:/\d{4}(?:-\d{2})?)?/roster/?"'
 )
+# Same nav links, but capturing the whole roster path — for the school-hint site scan.
+_NAV_ROSTER_PATH = re.compile(
+    r'href="(?:https?://[^"/]+)?(/sports/[a-z0-9-]+(?:/\d{4}(?:-\d{2})?)?/roster/?)"'
+)
+_MAX_SITE_ROSTERS = 30  # bound on roster pages scanned per school-hint fallback search
+# The search page appends the full org <select> in a JS string (quotes escaped) — every org id
+# with its NCAA short display name ("Wisconsin", "App State", "Kansas St.").
+_ORG_OPTION = re.compile(r'<option value=\\?"(\d+)\\?">(.*?)<')
 
 # Abbreviations sites use in sport slugs, keyed by the default slug's dehyphenated base.
 _SLUG_ALIASES = {
@@ -151,14 +159,14 @@ def _slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
 
 
-def _find_player_link(page: str, slug: str, name_slug: str) -> str | None:
+def _find_player_link(page: str, slug: str | None, name_slug: str) -> str | None:
     """The player's bio link on a roster page, matched by name slug (exact, then
-    all-tokens-contained for middle names / suffixes).
+    all-tokens-contained for middle names / suffixes). `slug=None` matches any sport.
 
     Three URL grammars: Sidearm's `roster/{name-slug}/{id}`, WMT Digital's
     `roster[/season/{season}]/player/{name-slug}`, PrestoSports' `{season}/bios/{slug}`.
     """
-    esc = re.escape(slug)
+    esc = re.escape(slug) if slug else "[a-z0-9-]+"
     patterns = (
         re.compile(rf"/sports/{esc}/roster/([a-z][a-z0-9-]*)/\d+"),
         re.compile(rf"/sports/{esc}/roster/(?:season/[^/\"']+/)?player/([a-z][a-z0-9-]*)"),
@@ -251,7 +259,8 @@ class NcaaProvider:
         self._last_ts = 0.0
         self._lock = threading.Lock()
         self._warmed = False
-        self._directory: dict[str, str] | None = None  # org id -> athletic site host, lazy
+        self._directory: dict[str, dict] | None = None  # org id -> {site, name}, lazy
+        self._org_options: list[tuple[str, str]] = []  # (org id, NCAA short name), from warm-up
 
     def _get(self, url: str, params: dict | None = None, xhr: bool = False):
         """Throttled GET; solves the Akamai proof-of-work interstitial once if served."""
@@ -287,29 +296,30 @@ class NcaaProvider:
             timeout=30,
         )
 
-    def search(self, term: str) -> list[PerformerData]:
+    def search(
+        self, term: str, disambiguation: str | None = None
+    ) -> list[PerformerData]:
         try:
             if not self._warmed:  # cookie-priming page load, once per session
-                self._get(_SEARCH_PAGE, params={"q": term})
+                resp = self._get(_SEARCH_PAGE, params={"q": term})
+                self._org_options = [
+                    (oid, unescape(name)) for oid, name in _ORG_OPTION.findall(resp.text)
+                ]
                 self._warmed = True
-            resp = self._get(
-                _DATA_URL,
-                params={
-                    "sEcho": "1",
-                    "iDisplayStart": "0",
-                    "iDisplayLength": str(_PAGE_SIZE),
-                    "sSearch": term,
-                    "org_id_filter": "",
-                    "sport_code_filter": "",
-                },
-                xhr=True,
-            )
-            resp.raise_for_status()
-            rows = resp.json().get("aaData") or []
+            org = self._resolve_org(disambiguation) if disambiguation else None
+            rows = self._player_rows(term, org)
+            if org and not rows:
+                # Wrongly-resolved hint, or a transfer indexed under another school.
+                rows = self._player_rows(term, None)
         except ProviderError:
             raise
         except Exception as e:  # noqa: BLE001 - network/JSON failure
             raise ProviderError(f"ncaa: {e}") from e
+
+        if not rows and org:
+            # Sports outside the NCAA statistics program (dance, cheer, gymnastics, swim,
+            # track, golf) have no stats.ncaa.org rows at all — scan the school's own site.
+            return self._site_search(term, org)
 
         candidates = [c for c in (self._from_row(r) for r in rows) if c is not None]
         # The backend fuzzy-matches and returns oldest-first. Exact name matches outrank the
@@ -336,6 +346,49 @@ class NcaaProvider:
                 pass
             out.append(p)
         return out
+
+    def _player_rows(self, term: str, org_id: str | None) -> list[dict]:
+        resp = self._get(
+            _DATA_URL,
+            params={
+                "sEcho": "1",
+                "iDisplayStart": "0",
+                "iDisplayLength": str(_PAGE_SIZE),
+                "sSearch": term,
+                "org_id_filter": org_id or "",
+                "sport_code_filter": "",
+            },
+            xhr=True,
+        )
+        resp.raise_for_status()
+        return resp.json().get("aaData") or []
+
+    def _resolve_org(self, hint: str) -> str | None:
+        """Resolve a school qualifier ("Alabama", "App State") to an NCAA org id.
+
+        Tries the search page's embedded org list (NCAA short names): exact match, then
+        unambiguous containment; then the member directory's official names. Pure
+        abbreviations ("UVA") usually resolve nowhere and return None — the hint is
+        then simply unused.
+        """
+        hint_l = hint.strip().lower()
+        if not hint_l:
+            return None
+        for oid, name in self._org_options:
+            if name.lower() == hint_l:
+                return oid
+        contains = [
+            oid
+            for oid, name in self._org_options
+            if hint_l in name.lower() or name.lower() in hint_l
+        ]
+        if len(contains) == 1:
+            return contains[0]
+        directory = self._load_directory()
+        contains = [oid for oid, e in directory.items() if hint_l in e["name"].lower()]
+        if len(contains) == 1:
+            return contains[0]
+        return None
 
     def _from_row(self, row: dict) -> tuple[PerformerData, list[_Segment]] | None:
         """Map one DataTables row (name link + career cell) to a base candidate + its segments."""
@@ -416,8 +469,8 @@ class NcaaProvider:
         except Exception:  # noqa: BLE001
             return None
 
-    def _athletic_site(self, org_id: str) -> str | None:
-        """The school's athletic-site base URL, from the NCAA member directory (fetched once).
+    def _load_directory(self) -> dict[str, dict]:
+        """The NCAA member directory (fetched once): org id -> athletic site + official name.
 
         The directory keys on the same org ids as the stats.ncaa.org team links (verified:
         796 = Wisconsin → uwbadgers.com, 327 = Kansas St. → kstatesports.com).
@@ -429,13 +482,67 @@ class NcaaProvider:
             except Exception:  # noqa: BLE001
                 entries = []
             self._directory = {
-                str(e.get("orgId")): str(e.get("athleticWebUrl") or "").strip().rstrip("/")
+                str(e.get("orgId")): {
+                    "site": str(e.get("athleticWebUrl") or "").strip().rstrip("/"),
+                    "name": str(e.get("nameOfficial") or ""),
+                }
                 for e in entries
             }
-        host = self._directory.get(str(org_id))
+        return self._directory
+
+    def _athletic_site(self, org_id: str) -> str | None:
+        host = (self._load_directory().get(str(org_id)) or {}).get("site")
         if not host:
             return None
         return host if host.startswith("http") else f"https://{host}"
+
+    def _site_search(self, term: str, org_id: str) -> list[PerformerData]:
+        """School-hint fallback: scan the athletic site's own rosters for the name.
+
+        Used when stats.ncaa.org has no rows — sports outside the statistics program still
+        have rosters (including spirit squads) on the school site. Bounded to the roster
+        links on the homepage nav (current seasons, ≤ _MAX_SITE_ROSTERS pages); returns at
+        most one candidate, built entirely from the player's bio page.
+        """
+        site = self._athletic_site(org_id)
+        name_slug = _slugify(term)
+        if not (site and name_slug):
+            return []
+        resp = self._fetch(f"{site}/")
+        if resp is None or getattr(resp, "status_code", 0) != 200:
+            return []
+        paths = list(dict.fromkeys(_NAV_ROSTER_PATH.findall(resp.text)))[:_MAX_SITE_ROSTERS]
+        school = (self._load_directory().get(str(org_id)) or {}).get("name") or ""
+        for path in paths:
+            resp = self._fetch(f"{site}{path}")
+            if resp is None or getattr(resp, "status_code", 0) != 200:
+                continue
+            m = re.match(r"/sports/([a-z0-9-]+)", path)
+            slug = m.group(1) if m else None
+            link = _find_player_link(resp.text, slug, name_slug)
+            if not link:
+                continue
+            bio_url = f"{site}{link}"
+            resp = self._fetch(bio_url)
+            if resp is None or getattr(resp, "status_code", 0) != 200:
+                continue
+            sport = (slug or "").replace("-", " ").title()
+            p = PerformerData(
+                source=self.id,
+                # No stats.ncaa.org player id exists — the site-relative bio path is the
+                # stable identifier for this candidate.
+                source_entity_id=link,
+                name=term.strip(),
+                gender=(
+                    "Female"
+                    if slug and slug.startswith("women")
+                    else "Male" if slug and slug.startswith("men") else None
+                ),
+                disambiguation=f"{school} {sport}".strip(),
+            )
+            self._apply_bio(p, resp.text, bio_url)
+            return [p]
+        return []
 
     def _roster_enhance(self, p: PerformerData, segments: list[_Segment]) -> None:
         """Follow the player's teams (most recent stint first) to an athletic-site roster and

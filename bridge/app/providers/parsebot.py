@@ -30,7 +30,9 @@ class ParseBotProvider:
         self._api_key = api_key
         self._client = client or httpx.Client(timeout=20.0)
 
-    def search(self, term: str) -> list[PerformerData]:
+    def search(
+        self, term: str, disambiguation: str | None = None
+    ) -> list[PerformerData]:
         if not self._api_key:
             raise ProviderError("parse.bot: no API key configured")
         try:

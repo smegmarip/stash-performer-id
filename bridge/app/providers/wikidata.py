@@ -140,7 +140,9 @@ class WikidataProvider:
                     out[qid] = label
         return out
 
-    def search(self, term: str) -> list[PerformerData]:
+    def search(
+        self, term: str, disambiguation: str | None = None
+    ) -> list[PerformerData]:
         found = self._get(
             {
                 "action": "wbsearchentities",

@@ -19,7 +19,11 @@ class Provider(Protocol):
     label: str
     metered: bool
 
-    def search(self, term: str) -> list[PerformerData]: ...
+    # `disambiguation` is the name's qualifier (e.g. the school from a "<name> (School)"
+    # folder) — a hint a source may use to narrow its search; most sources ignore it.
+    def search(
+        self, term: str, disambiguation: str | None = None
+    ) -> list[PerformerData]: ...
 
 
 _REGISTRY: dict[str, Provider] = {}

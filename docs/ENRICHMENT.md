@@ -146,7 +146,9 @@ class PerformerData:            # standalone subset of Stash's performer schema
 class Provider(Protocol):
     id: str                    # 'wikidata' | 'parsebot'
     metered: bool
-    def search(self, term: str) -> list[PerformerData]: ...
+    # disambiguation = the name's qualifier (the school from a "<name> (School)" folder,
+    # see names.disambiguation) — an optional hint a source may use; most ignore it.
+    def search(self, term: str, disambiguation: str | None = None) -> list[PerformerData]: ...
 ```
 
 `enrichment_profile` (§2) carries the same standalone columns; `enrichment_candidate.data` is a
