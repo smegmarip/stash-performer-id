@@ -575,6 +575,34 @@ _NCAA_CHALLENGE = """
 <body><script>xhr.send(JSON.stringify({"bm-verify": "TOKEN123", "pow": j}));</script></body></html>
 """
 
+# NCAA member directory (same org-id space as the career links: 327 = Kansas St.).
+_NCAA_DIRECTORY = [
+    {
+        "orgId": 327,
+        "nameOfficial": "Kansas State University",
+        "athleticWebUrl": "www.kstatesports.com",
+    },
+]
+
+_NCAA_ROSTER = """
+<html><body>
+<a href="/sports/womens-volleyball/roster/aliyah-carter/11942">Aliyah Carter</a>
+<a href="/sports/womens-volleyball/roster/liz-gregorski/12660">Liz Gregorski</a>
+</body></html>
+"""
+
+_NCAA_ROSTER_BIO = """
+<html><head><meta property="og:image" content="https://images.sidearmdev.com/liz.png"></head>
+<body>
+<span>Position</span><span>Outside Hitter</span>
+<span>Class</span><span>Redshirt Junior</span>
+<span>Height</span><span>5-11</span>
+<span>Hometown</span><span>Appleton, Wis.</span>
+<span>High School</span><span>Xavier</span>
+<span>Major</span><span>Kinesiology</span>
+</body></html>
+"""
+
 
 class _NcaaResp:
     def __init__(self, text="", status=200, json_data=None):
@@ -591,14 +619,23 @@ class _NcaaResp:
 
 
 class _FakeNcaaClient:
-    def __init__(self, challenge=False, detail_status=200, search_status=200):
+    def __init__(self, challenge=False, detail_status=200, search_status=200, directory=None):
         self.challenge = challenge
         self.detail_status = detail_status
         self.search_status = search_status
+        self.directory = _NCAA_DIRECTORY if directory is None else directory
         self.verified = False
         self.posts = []
 
     def get(self, url, params=None, headers=None, timeout=None):
+        if "web3.ncaa.org/directory" in url:
+            return _NcaaResp(json_data=self.directory)
+        if "kstatesports.com/sports/womens-volleyball/roster/liz-gregorski/12660" in url:
+            return _NcaaResp(text=_NCAA_ROSTER_BIO)
+        if "kstatesports.com/sports/womens-volleyball/roster/2024" in url:
+            return _NcaaResp(text=_NCAA_ROSTER)
+        if "kstatesports.com" in url:
+            return _NcaaResp(text="not found", status=404)
         if "/search/players/data" in url:
             return _NcaaResp(status=self.search_status, json_data=_NCAA_ROWS)
         if "/search/players" in url:
@@ -629,7 +666,7 @@ def test_ncaa_maps_search_and_sorts_recent_first():
     assert r.career_start == "2019" and r.career_end == "2025"  # "2024-25" ends in 2025
     assert r.height == "180"  # 5-11 -> cm
     assert r.country == "US"  # "Appleton, WI" -> US state
-    assert r.urls == ["https://stats.ncaa.org/players/8905834"]
+    assert r.urls[0] == "https://stats.ncaa.org/players/8905834"
     assert "Wisconsin Women's Volleyball" in r.disambiguation
     assert "2019–2025" in r.disambiguation
     assert r.custom_fields["ncaa_position"] == "OH"
@@ -638,7 +675,18 @@ def test_ncaa_maps_search_and_sorts_recent_first():
     assert r.custom_fields["ncaa_hometown"] == "Appleton, WI"
     assert r.custom_fields["ncaa_high_school"] == "Xavier"
     assert "Kansas St. Women's Volleyball (2023–2025)" in r.custom_fields["ncaa_teams"]
+    # Roster hop (directory -> Sidearm roster -> bio page): photo + bio URL + gap fill.
+    assert r.images == ["https://images.sidearmdev.com/liz.png"]
+    assert (
+        "https://www.kstatesports.com/sports/womens-volleyball/roster/liz-gregorski/12660"
+        in r.urls
+    )
+    assert r.custom_fields["ncaa_major"] == "Kinesiology"  # only the bio page has it
+    assert r.custom_fields["ncaa_position"] == "OH"  # stats.ncaa.org wins over "Outside Hitter"
+    assert r.custom_fields["ncaa_hometown"] == "Appleton, WI"  # not "Appleton, Wis."
+    # The older candidate's school (org 75) is not in the directory -> roster hop skipped.
     assert out[1].source_entity_id == "1505026" and out[1].career_end == "2002"
+    assert out[1].images == []
 
 
 def test_ncaa_solves_akamai_interstitial():
@@ -651,10 +699,159 @@ def test_ncaa_solves_akamai_interstitial():
 
 
 def test_ncaa_keeps_row_candidate_on_detail_failure():
-    r = _ncaa(_FakeNcaaClient(detail_status=500)).search("Liz Gregorski")[0]
+    r = _ncaa(_FakeNcaaClient(detail_status=500, directory=[])).search("Liz Gregorski")[0]
     assert r.source_entity_id == "8905834" and r.career_end == "2025"
     assert r.height is None and r.country is None  # bio fields missing, row fields kept
     assert set(r.custom_fields) == {"ncaa_teams"}  # detail-page keys absent
+
+
+def test_ncaa_roster_bio_fills_gaps_when_detail_fails():
+    # stats.ncaa.org detail page down -> the athletic-site bio supplies the missing fields.
+    r = _ncaa(_FakeNcaaClient(detail_status=500)).search("Liz Gregorski")[0]
+    assert r.custom_fields["ncaa_position"] == "Outside Hitter"
+    assert r.custom_fields["ncaa_class"] == "Redshirt Junior"
+    assert r.custom_fields["ncaa_hometown"] == "Appleton, Wis."
+    assert r.custom_fields["ncaa_high_school"] == "Xavier"
+    assert r.height == "180"  # 5-11 from the bio page
+    assert r.images == ["https://images.sidearmdev.com/liz.png"]
+
+
+def test_ncaa_exact_name_outranks_recency():
+    # The backend fuzzy-matches: a more recent "Gregorsky" must not outrank the exact match.
+    rows = {
+        "aaData": _NCAA_ROWS["aaData"]
+        + [
+            {
+                "people-last_name": '<a href="/players/9999999">Liz Gregorsky</a>',
+                "players-seasons_played": "1",
+                "players-career": (
+                    '2025-26 - 2026-27 @<a href="/teams/history/WLA/75">'
+                    "Coast Guard Women&#39;s Lacrosse</a>"
+                ),
+            }
+        ]
+    }
+
+    class _Client(_FakeNcaaClient):
+        def get(self, url, params=None, headers=None, timeout=None):
+            if "/search/players/data" in url:
+                return _NcaaResp(json_data=rows)
+            return super().get(url, params, headers, timeout)
+
+    out = _ncaa(_Client()).search("Liz Gregorski")
+    assert out[0].source_entity_id == "8905834"  # exact + most recent
+    assert [r.name for r in out] == ["Liz Gregorski", "Liz Gregorski", "Liz Gregorsky"]
+
+
+def test_ncaa_wmt_grammar_and_slug_discovery():
+    # Purdue-style site: WMT URL grammar, sport slug "volleyball" (not "womens-volleyball"),
+    # discovered from the nav of the default-slug page; bio uses classic name="og:image".
+    rows = {
+        "aaData": [
+            {
+                "people-last_name": '<a href="/players/6271216">Blake Mohler</a>',
+                "players-seasons_played": "5",
+                "players-career": (
+                    '2015-16 - 2019-20 @<a href="/teams/history/WVB/512">'
+                    "Purdue Women&#39;s Volleyball</a>"
+                ),
+            }
+        ]
+    }
+    nav_page = '<html><a href="/sports/volleyball/roster">Volleyball</a>no players here</html>'
+    wmt_roster = (
+        '<html><a href="/sports/volleyball/roster/season/2019/player/blake-mohler">'
+        "Blake Mohler</a></html>"
+    )
+    wmt_bio = (
+        '<html><head><meta name="og:image" content="https://purdue.test/blake.jpg"></head>'
+        "<body><span>Position</span><span>MB</span></body></html>"
+    )
+
+    class _Client(_FakeNcaaClient):
+        def get(self, url, params=None, headers=None, timeout=None):
+            if "/search/players/data" in url:
+                return _NcaaResp(json_data=rows)
+            if "web3.ncaa.org/directory" in url:
+                return _NcaaResp(json_data=[{"orgId": 512, "athleticWebUrl": "purdue.test"}])
+            if "purdue.test/sports/womens-volleyball/roster/2019" in url:
+                return _NcaaResp(text=nav_page)  # 200 but wrong slug: only the nav
+            if "purdue.test/sports/volleyball/roster/season/2019/player/blake-mohler" in url:
+                return _NcaaResp(text=wmt_bio)
+            if "purdue.test/sports/volleyball/roster/season/2019" in url:
+                return _NcaaResp(text=wmt_roster)
+            if "purdue.test" in url:
+                return _NcaaResp(text="not found", status=404)
+            return super().get(url, params, headers, timeout)
+
+    r = _ncaa(_Client(detail_status=500)).search("Blake Mohler")[0]
+    assert (
+        "https://purdue.test/sports/volleyball/roster/season/2019/player/blake-mohler" in r.urls
+    )
+    assert r.images == ["https://purdue.test/blake.jpg"]  # name="og:image" variant
+    assert r.custom_fields["ncaa_position"] == "MB"
+
+
+def test_ncaa_presto_grammar_with_homepage_slug_discovery():
+    # Ferris State-style PrestoSports site: every default-slug URL 404s, the homepage nav
+    # reveals the abbreviated slug ("wsoc"), the roster lives at /{season}/roster, and bios
+    # use last_first_hash slugs.
+    rows = {
+        "aaData": [
+            {
+                "people-last_name": '<a href="/players/5555555">Morgan Irwin</a>',
+                "players-seasons_played": "4",
+                "players-career": (
+                    '2016-17 - 2019-20 @<a href="/teams/history/WSO/224">'
+                    "Ferris St. Women&#39;s Soccer</a>"
+                ),
+            }
+        ]
+    }
+    # Nav link is site-absolute (as on ferrisstatebulldogs.com); bio has only twitter:image.
+    home = '<html><a href="https://ferris.test/sports/wsoc/2025-26/roster">Soccer</a></html>'
+    roster = (
+        '<html><a href="/sports/wsoc/2019-20/bios/irwin_morgan_g6mz">Morgan Irwin</a></html>'
+    )
+    bio = (
+        '<html><head><meta name="twitter:image" content="https://ferris.test/morgan.jpg">'
+        "</head><body><span>Position</span><span>GK</span></body></html>"
+    )
+
+    class _Client(_FakeNcaaClient):
+        def get(self, url, params=None, headers=None, timeout=None):
+            if "/search/players/data" in url:
+                return _NcaaResp(json_data=rows)
+            if "web3.ncaa.org/directory" in url:
+                return _NcaaResp(json_data=[{"orgId": 224, "athleticWebUrl": "ferris.test"}])
+            if url.rstrip("/") == "https://ferris.test":
+                return _NcaaResp(text=home)
+            if "ferris.test/sports/wsoc/2019-20/bios/irwin_morgan_g6mz" in url:
+                return _NcaaResp(text=bio)
+            if "ferris.test/sports/wsoc/2019-20/roster" in url:
+                return _NcaaResp(text=roster)
+            if "ferris.test" in url:
+                return _NcaaResp(text="not found", status=404)
+            return super().get(url, params, headers, timeout)
+
+    r = _ncaa(_Client(detail_status=500)).search("Morgan Irwin")[0]
+    assert "https://ferris.test/sports/wsoc/2019-20/bios/irwin_morgan_g6mz" in r.urls
+    assert r.images == ["https://ferris.test/morgan.jpg"]
+    assert r.custom_fields["ncaa_position"] == "GK"
+
+
+def test_ncaa_placeholder_share_image_skipped():
+    p = PerformerData(source="ncaa", source_entity_id="1", name="X")
+    page = '<meta property="og:image" content="https://x/images/setup/thumbnail_default.jpg">'
+    _ncaa(_FakeNcaaClient())._apply_bio(p, page, "https://x/bio")
+    assert p.images == []  # stock fallback image is not a headshot
+    assert p.urls == ["https://x/bio"]
+
+
+def test_ncaa_roster_skips_unknown_school():
+    r = _ncaa(_FakeNcaaClient(directory=[])).search("Liz Gregorski")[0]
+    assert r.images == [] and r.custom_fields.get("ncaa_major") is None
+    assert r.custom_fields["ncaa_position"] == "OH"  # stats.ncaa.org data intact
 
 
 def test_profile_custom_fields_round_trip(ctx):

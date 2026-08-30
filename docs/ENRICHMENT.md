@@ -167,7 +167,13 @@ serialized `PerformerData`.
   candidates (name, teams, career span, gender inferred from sport), then the player page's bio
   `<dl>` → height (ft-in → cm), hometown (→ `country` for US states), and the schema-less rest
   (position/class/jersey/hometown/high-school/teams) into `custom_fields` as `ncaa_*` keys.
-  No birthdate or photos (team-roster scraping is a planned follow-up). Akamai
+  A third hop follows the most recent team to the school's own athletic site for the player's
+  roster bio: the career-cell org id is the same NCAA org id the member directory
+  (web3.ncaa.org/directory) keys on → `athleticWebUrl`, and most athletic sites are Sidearm-
+  hosted with the uniform `/sports/{slug}/roster/{season}` → `/roster/{name-slug}/{id}` URL
+  structure. That hop contributes the **player photo** (og:image), the bio URL, and any bio
+  fields stats.ncaa.org lacked (hometown/high-school/major on older players); non-Sidearm
+  schools skip it silently. Still no birthdate. Akamai
   is cleared via curl_cffi Chrome TLS impersonation + an inline proof-of-work solve (FlareSolverr
   doesn't apply — it targets Cloudflare). `source_entity_id` = player id.
 - A `providers` registry exposes the list to the viewer's active-source selector; adding a source
