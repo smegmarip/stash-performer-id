@@ -159,6 +159,14 @@ serialized `PerformerData`.
 - **`ParseBotProvider`** (metered: **199 test credits**): The Handbook `search_profiles` — a
   talent-contact directory, so **image + profile URL** (type → disambiguation, social_reach →
   score) only, no bio. `source_entity_id` = profile id.
+- **`NcaaProvider`** (free): stats.ncaa.org — the only comprehensive NCAA athlete index (~3M
+  records, every sport/division back to the '90s). DataTables JSON search → recency-sorted
+  candidates (name, teams, career span, gender inferred from sport), then the player page's bio
+  `<dl>` → height (ft-in → cm), hometown (→ `country` for US states), and the schema-less rest
+  (position/class/jersey/hometown/high-school/teams) into `custom_fields` as `ncaa_*` keys.
+  No birthdate or photos (team-roster scraping is a planned follow-up). Akamai
+  is cleared via curl_cffi Chrome TLS impersonation + an inline proof-of-work solve (FlareSolverr
+  doesn't apply — it targets Cloudflare). `source_entity_id` = player id.
 - A `providers` registry exposes the list to the viewer's active-source selector; adding a source
   = one new `Provider` impl + registry entry.
 

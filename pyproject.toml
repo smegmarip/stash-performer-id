@@ -12,6 +12,7 @@ dependencies = [
     "httpx>=0.27",
     "lxml>=5.0",          # Babepedia HTML parsing (XPath), ported from the community scraper
     "cloudscraper>=1.2",  # Babepedia is behind Cloudflare
+    "curl_cffi>=0.7",     # stats.ncaa.org is behind Akamai (rejects plain-requests TLS)
 ]
 
 [dependency-groups]

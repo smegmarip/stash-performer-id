@@ -24,6 +24,7 @@ const SOURCE_FAVICON: Record<string, string> = {
   babepedia: "https://www.babepedia.com/favicon.ico",
   wikidata: "https://www.wikidata.org/favicon.ico",
   parsebot: "https://parse.bot/favicon.ico",
+  ncaa: "https://www.ncaa.com/favicon.ico", // stats.ncaa.org serves a 0-byte favicon
 };
 // Transient per-row state while a search runs, so each row updates live as its own request
 // resolves (the Stash tagger paradigm) — and on completion holds the candidates to render inline.

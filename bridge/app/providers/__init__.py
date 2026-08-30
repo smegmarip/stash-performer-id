@@ -14,6 +14,7 @@ from bridge.app.providers.base import (
     register,
 )
 from bridge.app.providers.models import LIST_FIELDS, PROFILE_FIELDS, PerformerData
+from bridge.app.providers.ncaa import NcaaProvider
 from bridge.app.providers.parsebot import ParseBotProvider
 from bridge.app.providers.wikidata import WikidataProvider
 
@@ -22,6 +23,7 @@ register(WikidataProvider())
 register(BabepediaProvider(flaresolverr_url=_settings.flaresolverr_url))
 _key = _settings.parse_bot_api_key
 register(ParseBotProvider(_key.get_secret_value() if _key else None))
+register(NcaaProvider())
 
 __all__ = [
     "Provider",
@@ -32,6 +34,7 @@ __all__ = [
     "WikidataProvider",
     "BabepediaProvider",
     "ParseBotProvider",
+    "NcaaProvider",
     "get_provider",
     "list_sources",
     "register",

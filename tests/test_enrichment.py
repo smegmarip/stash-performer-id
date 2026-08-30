@@ -6,6 +6,7 @@ from bridge.app.cache.db import Database
 from bridge.app.main import app
 from bridge.app.providers import (
     BabepediaProvider,
+    NcaaProvider,
     ParseBotProvider,
     PerformerData,
     ProviderError,
@@ -524,7 +525,136 @@ def test_wikidata_filters_non_humans():
     assert WikidataProvider(client=NoHuman()).search("x") == []
 
 
-# --- custom_fields (provider-side {name: scalar} map) ---
+# --- NCAA (stats.ncaa.org) ---
+
+_NCAA_ROWS = {
+    "aaData": [
+        {  # oldest-first, as the real backend returns
+            "people-last_name": (
+                '<a target="person_1_win" class="skipMask" href="/players/1505026">'
+                "Liz Gregorski</a>"
+            ),
+            "players-seasons_played": "1",
+            "players-career": (
+                '2001-02 - 2001-02 @<a href="/teams/history/WSO/75">'
+                "Bridgewater (VA) Women&#39;s Soccer</a>"
+            ),
+        },
+        {
+            "people-last_name": (
+                '<a target="person_2_win" class="skipMask" href="/players/8905834">'
+                "Liz Gregorski</a>"
+            ),
+            "players-seasons_played": "6",
+            "players-career": (
+                '2019-20 - 2022-23 @<a href="/teams/history/WVB/754">'
+                "Wisconsin Women&#39;s Volleyball</a>"
+                '2023-24 - 2024-25 @<a href="/teams/history/WVB/327">'
+                "Kansas St. Women&#39;s Volleyball</a>"
+            ),
+        },
+    ]
+}
+
+_NCAA_DETAIL = """
+<html><body>
+<dl class="row mb-0"><dt>Name:</dt><dd>Morgan Family Arena</dd><dt>Capacity:</dt><dd>3,044</dd></dl>
+<dl class="row mb-0 text-nowrap">
+  <dt>Class:</dt><dd>Sr.</dd>
+  <dt>Jersey #:</dt><dd>1</dd>
+  <dt>Position #:</dt><dd>OH</dd>
+  <dt>Height:</dt><dd>5-11</dd>
+  <dt>Hometown:</dt><dd>Appleton, WI</dd>
+  <dt>High School:</dt><dd>Xavier</dd>
+</dl>
+</body></html>
+"""
+
+_NCAA_CHALLENGE = """
+<html><head><script> var i = 100; var j = i + Number("6052" + "30563"); </script></head>
+<body><script>xhr.send(JSON.stringify({"bm-verify": "TOKEN123", "pow": j}));</script></body></html>
+"""
+
+
+class _NcaaResp:
+    def __init__(self, text="", status=200, json_data=None):
+        self.text = text
+        self.status_code = status
+        self._json = json_data
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return self._json
+
+
+class _FakeNcaaClient:
+    def __init__(self, challenge=False, detail_status=200, search_status=200):
+        self.challenge = challenge
+        self.detail_status = detail_status
+        self.search_status = search_status
+        self.verified = False
+        self.posts = []
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        if "/search/players/data" in url:
+            return _NcaaResp(status=self.search_status, json_data=_NCAA_ROWS)
+        if "/search/players" in url:
+            return _NcaaResp(text="<html>search page</html>", status=self.search_status)
+        if "stats.ncaa.org/players/" in url:
+            if self.challenge and not self.verified:
+                return _NcaaResp(text=_NCAA_CHALLENGE)
+            return _NcaaResp(text=_NCAA_DETAIL, status=self.detail_status)
+        raise AssertionError(f"unexpected URL {url}")
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        self.posts.append((url, json))
+        self.verified = True
+        return _NcaaResp(json_data={"reload": True})
+
+
+def _ncaa(client):
+    return NcaaProvider(client=client, min_interval=0)
+
+
+def test_ncaa_maps_search_and_sorts_recent_first():
+    out = _ncaa(_FakeNcaaClient()).search("Liz Gregorski")
+    assert len(out) == 2
+    r = out[0]  # 2019-25 career sorts ahead of the 2001-02 one
+    assert r.source == "ncaa" and r.source_entity_id == "8905834"
+    assert r.name == "Liz Gregorski"
+    assert r.gender == "Female"  # from "Women's" in the team names
+    assert r.career_start == "2019" and r.career_end == "2025"  # "2024-25" ends in 2025
+    assert r.height == "180"  # 5-11 -> cm
+    assert r.country == "US"  # "Appleton, WI" -> US state
+    assert r.urls == ["https://stats.ncaa.org/players/8905834"]
+    assert "Wisconsin Women's Volleyball" in r.disambiguation
+    assert "2019–2025" in r.disambiguation
+    assert r.custom_fields["ncaa_position"] == "OH"
+    assert r.custom_fields["ncaa_class"] == "Sr."
+    assert r.custom_fields["ncaa_jersey"] == "1"
+    assert r.custom_fields["ncaa_hometown"] == "Appleton, WI"
+    assert r.custom_fields["ncaa_high_school"] == "Xavier"
+    assert "Kansas St. Women's Volleyball (2023–2025)" in r.custom_fields["ncaa_teams"]
+    assert out[1].source_entity_id == "1505026" and out[1].career_end == "2002"
+
+
+def test_ncaa_solves_akamai_interstitial():
+    client = _FakeNcaaClient(challenge=True)
+    r = _ncaa(client).search("Liz Gregorski")[0]
+    url, body = client.posts[0]
+    assert url.startswith("https://stats.ncaa.org/_sec/verify")
+    assert body == {"bm-verify": "TOKEN123", "pow": 100 + 605230563}
+    assert r.height == "180"  # detail parsed after the challenge cleared
+
+
+def test_ncaa_keeps_row_candidate_on_detail_failure():
+    r = _ncaa(_FakeNcaaClient(detail_status=500)).search("Liz Gregorski")[0]
+    assert r.source_entity_id == "8905834" and r.career_end == "2025"
+    assert r.height is None and r.country is None  # bio fields missing, row fields kept
+    assert set(r.custom_fields) == {"ncaa_teams"}  # detail-page keys absent
 
 
 def test_profile_custom_fields_round_trip(ctx):
@@ -538,3 +668,8 @@ def test_profile_custom_fields_round_trip(ctx):
     prof = db.get_enrichment_profile(nid)
     assert prof["custom_fields"] == cf  # dict round-trips via JSON column
     assert prof["field_sources"]["custom_fields"] == "ncaa"
+
+
+def test_ncaa_blocked_raises_provider_error():
+    with pytest.raises(ProviderError, match="Akamai"):
+        _ncaa(_FakeNcaaClient(search_status=403)).search("x")
