@@ -54,3 +54,22 @@ def test_bulk_set_valid(client):
 def test_patch_missing_name_404(client):
     r = client.patch("/names/424242", json={"valid": True})
     assert r.status_code == 404
+
+
+def test_path_harvest_multiple_roots(client, tmp_path, monkeypatch):
+    for sub in ("rootA/Jane Doe (Alabama)", "rootB/Mary Major (UVA)"):
+        d = tmp_path / sub
+        d.mkdir(parents=True)
+        (d / "001.jpg").write_bytes(b"x")
+    monkeypatch.setenv("TOP_FOLDER", f"{tmp_path}/rootA:{tmp_path}/rootB")
+    from bridge.app.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        r = client.post("/harvest/path", json={})
+        assert r.status_code == 200
+        assert r.json()["folders"] == 2  # one named folder per root, counts merged
+        names = client.get("/names", params={"q": "doe"}).json()["names"]
+        assert names[0]["name"] == "Jane Doe" and names[0]["disambiguation"] == "Alabama"
+    finally:
+        get_settings.cache_clear()

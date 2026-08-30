@@ -42,8 +42,15 @@ class Settings(BaseSettings):
     flaresolverr_url: str | None = None  # e.g. http://flaresolverr:8191/v1 (Babepedia Cloudflare)
 
     # --- Harvest ---
-    top_folder: str | None = None
+    top_folder: str | None = None  # one root, or several separated by ':' (see top_folders)
     media_root: str = "/data"  # read-only media mount inside the container
+
+    @property
+    def top_folders(self) -> list[str]:
+        """TOP_FOLDER as a list of roots (colon-separated); empty when unconfigured."""
+        if not self.top_folder:
+            return []
+        return [p.strip() for p in self.top_folder.split(":") if p.strip()]
 
     # --- Storage ---
     db_path: str = "/cache/stash-performer-id.sqlite"
