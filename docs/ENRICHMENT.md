@@ -100,11 +100,14 @@ excluding every field that references a Stash entity or is Stash-management stat
 Excluded: `tags`/`tag_ids`, `stash_ids`, `favorite`, `rating100`, `ignore_auto_tag`, and the
 deprecated `url`/`twitter`/`instagram`/`career_length`/`image` (folded into `urls`/`images`).
 
-`custom_fields` normalizes source data that has no home in the performer schema, as a flat map
-of scalar values with **source-prefixed keys** (`ncaa_position`). The map stays provider-side —
-no Stash pull surface can carry it (`ScrapedPerformer` has no map field; the stash-box client's
-Go mapping is fixed), and we do not push Stash performer custom fields via mutations. It lives
-in the enrichment profile and the viewer.
+`custom_fields` normalizes source data that has no home in the performer schema (e.g. NCAA
+position/hometown/teams), as a flat map of scalar values with **source-prefixed keys**
+(`ncaa_position`). The map itself stays provider-side — no Stash pull surface can carry it
+(`ScrapedPerformer` has no map field; the stash-box client's Go mapping is fixed), and we do
+not push Stash performer custom fields via mutations. It reaches Stash **only as a templated
+`details` paragraph** (`NCAA — Position: OH · …`), rendered at the scrape surface
+(`_custom_fields_paragraph` in `bridge/app/api/scrape.py`) and appended to any profile
+`details`, since `details` does ride `ScrapedPerformer` into the tagger's create flow.
 
 ```python
 @dataclass

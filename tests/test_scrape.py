@@ -134,3 +134,31 @@ def test_scrape_proxies_hotlink_protected_images(ctx):
     # thehandbook.com is a default proxy host -> the URL is rewritten through /image-proxy.
     assert p["images"][0].startswith("http://localhost:15000/image-proxy?url=")
     assert "thehandbook.com" in p["images"][0]  # original URL encoded in the query
+
+
+def test_scrape_renders_custom_fields_into_details(ctx):
+    db, client, nid = ctx
+    db.apply_enrichment_profile(
+        nid,
+        {
+            "details": {"value": "A volleyball player.", "source": "ncaa"},
+            "custom_fields": {
+                "value": {"ncaa_position": "OH", "ncaa_high_school": "Xavier"},
+                "source": "ncaa",
+            },
+        },
+    )
+    p = client.post("/scrape/image", json={"id": "i1", "files": []}).json()["performers"][0]
+    # The map itself can't ride ScrapedPerformer — it lands as a templated details paragraph,
+    # appended after the profile's own details, with the source prefix stripped from labels.
+    assert p["details"] == "A volleyball player.\n\nNCAA — Position: OH · High School: Xavier"
+
+
+def test_scrape_custom_fields_paragraph_without_details(ctx):
+    db, client, nid = ctx
+    db.apply_enrichment_profile(
+        nid,
+        {"custom_fields": {"value": {"ncaa_class": "Sr."}, "source": "ncaa"}},
+    )
+    p = client.post("/scrape/image", json={"id": "i1", "files": []}).json()["performers"][0]
+    assert p["details"] == "NCAA — Class: Sr."

@@ -26,6 +26,27 @@ _SCRAPED_SCALARS = (
 )
 
 
+def _custom_fields_paragraph(profile: dict) -> str | None:
+    """Render the profile's custom_fields map as a templated paragraph for `details`.
+
+    custom_fields is provider-side data with no Stash home (ScrapedPerformer has no map field),
+    so `details` — which does ride the scraper surface — is how it persists in Stash. Keys are
+    source-prefixed (`ncaa_position`); the prefix matching the recorded source becomes the
+    paragraph header and is stripped from the labels.
+    """
+    cf = profile.get("custom_fields") or {}
+    if not cf:
+        return None
+    source = (profile.get("field_sources") or {}).get("custom_fields") or ""
+    prefix = f"{source}_"
+    parts = []
+    for key, value in cf.items():
+        label = key.removeprefix(prefix) if source else key
+        parts.append(f"{label.replace('_', ' ').title()}: {value}")
+    body = " · ".join(parts)
+    return f"{source.upper()} — {body}" if source else body
+
+
 def _merge_profile(performer: dict, profile: dict) -> None:
     """Merge a resolved enrichment profile onto the scraped performer (only populated fields).
 
@@ -37,6 +58,10 @@ def _merge_profile(performer: dict, profile: dict) -> None:
     for field in _SCRAPED_SCALARS:
         if profile.get(field):
             performer[field] = profile[field]
+    paragraph = _custom_fields_paragraph(profile)
+    if paragraph:
+        existing = performer.get("details")
+        performer["details"] = f"{existing}\n\n{paragraph}" if existing else paragraph
     if profile.get("aliases"):
         performer["aliases"] = ", ".join(profile["aliases"])
     if profile.get("urls"):
