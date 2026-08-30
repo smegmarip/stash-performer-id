@@ -42,10 +42,20 @@ export const PROFILE_FIELDS = [
   "name", "disambiguation", "aliases", "gender", "birthdate", "death_date", "ethnicity",
   "country", "hair_color", "eye_color", "height", "weight", "measurements", "fake_tits",
   "penis_length", "circumcised", "career_start", "career_end", "tattoos", "piercings",
-  "details", "urls",
+  "details", "custom_fields", "urls",
 ] as const;
 export type ProfileField = (typeof PROFILE_FIELDS)[number];
 export const LIST_FIELDS = new Set(["aliases", "urls", "images"]);
+// {name: scalar} map fields — provider-side extras shown here, never pushed to Stash.
+export const DICT_FIELDS = new Set(["custom_fields"]);
+
+// Empty for display purposes: null/""/[]/{} — mirrors PerformerData.populated_fields().
+export function isEmptyField(value: unknown): boolean {
+  if (value == null || value === "") return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.keys(value).length === 0;
+  return false;
+}
 
 export type PerformerData = {
   source: string;

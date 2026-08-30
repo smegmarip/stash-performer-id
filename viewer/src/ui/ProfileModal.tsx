@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { api, PROFILE_FIELDS } from "../lib/api";
+import { api, isEmptyField, PROFILE_FIELDS } from "../lib/api";
 import type { EnrichProfile } from "../lib/api";
 
 // Read-only view of a name's resolved enrichment profile — the only way to inspect it. Opened by
@@ -70,8 +70,7 @@ export function ProfileModal({
   const sources = (profile?.field_sources ?? {}) as Record<string, string>;
   const fields = p
     ? PROFILE_FIELDS.map((f) => ({ field: f as string, value: p[f] })).filter(
-        ({ value }) =>
-          value != null && value !== "" && !(Array.isArray(value) && value.length === 0),
+        ({ value }) => !isEmptyField(value),
       )
     : [];
 
@@ -90,6 +89,18 @@ export function ProfileModal({
       );
     }
     if (field === "details") return <DetailsText text={String(value)} />;
+    if (field === "custom_fields" && typeof value === "object" && value) {
+      return (
+        <dl className="space-y-0.5">
+          {Object.entries(value as Record<string, unknown>).map(([k, v]) => (
+            <div key={k} className="flex gap-1">
+              <dt className="text-base-content/60 shrink-0 capitalize">{k.replace(/_/g, " ")}:</dt>
+              <dd className="break-words">{String(v)}</dd>
+            </div>
+          ))}
+        </dl>
+      );
+    }
     return display(value);
   };
 

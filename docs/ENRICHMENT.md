@@ -96,9 +96,15 @@ A source-neutral DTO and a protocol; resolvers/UI depend only on the DTO.
 
 `PerformerData` mirrors **Stash's full performer schema** (`ScrapedPerformer` / `PerformerCreateInput`),
 excluding every field that references a Stash entity or is Stash-management state, so each field is
-**standalone** (scalar or list-of-scalar). Excluded: `tags`/`tag_ids`, `stash_ids`, `favorite`,
-`rating100`, `ignore_auto_tag`, `custom_fields`, and the deprecated `url`/`twitter`/`instagram`/
-`career_length`/`image` (folded into `urls`/`images`).
+**standalone** (scalar, list-of-scalar, or — for `custom_fields` — a flat `{name: scalar}` map).
+Excluded: `tags`/`tag_ids`, `stash_ids`, `favorite`, `rating100`, `ignore_auto_tag`, and the
+deprecated `url`/`twitter`/`instagram`/`career_length`/`image` (folded into `urls`/`images`).
+
+`custom_fields` normalizes source data that has no home in the performer schema, as a flat map
+of scalar values with **source-prefixed keys** (`ncaa_position`). The map stays provider-side —
+no Stash pull surface can carry it (`ScrapedPerformer` has no map field; the stash-box client's
+Go mapping is fixed), and we do not push Stash performer custom fields via mutations. It lives
+in the enrichment profile and the viewer.
 
 ```python
 @dataclass

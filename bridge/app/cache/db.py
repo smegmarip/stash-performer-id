@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS enrichment_profile (
     height TEXT, weight TEXT, measurements TEXT, fake_tits TEXT, penis_length TEXT,
     circumcised TEXT, career_start TEXT, career_end TEXT, tattoos TEXT, piercings TEXT,
     details TEXT, urls TEXT, images TEXT,
+    custom_fields TEXT,              -- JSON {name: scalar} map (Stash performer custom fields)
     field_sources TEXT,              -- {field: source} provenance
     updated_at TEXT NOT NULL
 );
@@ -151,11 +152,15 @@ class Database:
 
     def init_schema(self) -> None:
         self.conn.executescript(SCHEMA)
-        # Lightweight migration for DBs created before thumb_stash_id existed.
-        try:
-            self.conn.execute("ALTER TABLE asset ADD COLUMN thumb_stash_id TEXT")
-        except sqlite3.OperationalError:
-            pass  # column already present
+        # Lightweight migrations for DBs created before these columns existed.
+        for ddl in (
+            "ALTER TABLE asset ADD COLUMN thumb_stash_id TEXT",
+            "ALTER TABLE enrichment_profile ADD COLUMN custom_fields TEXT",
+        ):
+            try:
+                self.conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass  # column already present
         self.conn.commit()
 
     def close(self) -> None:
@@ -544,9 +549,10 @@ class Database:
         "name", "disambiguation", "aliases", "gender", "birthdate", "death_date",
         "ethnicity", "country", "hair_color", "eye_color", "height", "weight",
         "measurements", "fake_tits", "penis_length", "circumcised", "career_start",
-        "career_end", "tattoos", "piercings", "details", "urls", "images",
+        "career_end", "tattoos", "piercings", "details", "custom_fields", "urls", "images",
     )
     _PROFILE_LIST_COLS = frozenset({"aliases", "urls", "images"})
+    _PROFILE_DICT_COLS = frozenset({"custom_fields"})
 
     def has_enrichment_search(self, name_id: int, source: str) -> bool:
         """True if a (name, source) search has been run — the cache-first marker."""
@@ -616,6 +622,8 @@ class Database:
         out = dict(row)
         for col in self._PROFILE_LIST_COLS:
             out[col] = json.loads(out[col]) if out.get(col) else []
+        for col in self._PROFILE_DICT_COLS:
+            out[col] = json.loads(out[col]) if out.get(col) else {}
         out["field_sources"] = json.loads(out["field_sources"]) if out.get("field_sources") else {}
         return out
 
@@ -642,6 +650,8 @@ class Database:
             src = spec.get("source") if isinstance(spec, dict) else None
             if col in self._PROFILE_LIST_COLS:
                 value = json.dumps(value or [])
+            elif col in self._PROFILE_DICT_COLS:
+                value = json.dumps(value or {})
             sets.append(f"{col} = ?")
             params.append(value)
             if src:

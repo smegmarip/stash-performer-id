@@ -522,3 +522,19 @@ def test_wikidata_filters_non_humans():
             return super().get(url, params)
 
     assert WikidataProvider(client=NoHuman()).search("x") == []
+
+
+# --- custom_fields (provider-side {name: scalar} map) ---
+
+
+def test_profile_custom_fields_round_trip(ctx):
+    db, client, nid = ctx
+    cf = {"ncaa_position": "OH", "ncaa_hometown": "Appleton, WI"}
+    r = client.post(
+        "/enrichment/profile",
+        json={"name_id": nid, "fields": {"custom_fields": {"value": cf, "source": "ncaa"}}},
+    )
+    assert r.status_code == 200
+    prof = db.get_enrichment_profile(nid)
+    assert prof["custom_fields"] == cf  # dict round-trips via JSON column
+    assert prof["field_sources"]["custom_fields"] == "ncaa"

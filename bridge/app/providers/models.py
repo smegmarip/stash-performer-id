@@ -31,12 +31,18 @@ PROFILE_FIELDS: tuple[str, ...] = (
     "tattoos",
     "piercings",
     "details",
+    "custom_fields",
     "urls",
     "images",
 )
 
 # Fields that hold a list of scalars (serialized as JSON in the DB).
 LIST_FIELDS: frozenset[str] = frozenset({"aliases", "urls", "images"})
+
+# Fields that hold a flat {str: scalar} map (serialized as JSON in the DB). Provider-side
+# only: source data with no home in the performer schema, shown in the viewer but never
+# pushed to Stash (no Stash pull surface can carry a map — see docs/ENRICHMENT.md §3).
+DICT_FIELDS: frozenset[str] = frozenset({"custom_fields"})
 
 
 @dataclass
@@ -64,6 +70,7 @@ class PerformerData:
     tattoos: str | None = None
     piercings: str | None = None
     details: str | None = None
+    custom_fields: dict = field(default_factory=dict)  # {name: scalar}, source-prefixed keys
     urls: list[str] = field(default_factory=list)
     images: list[str] = field(default_factory=list)
     score: float | None = None

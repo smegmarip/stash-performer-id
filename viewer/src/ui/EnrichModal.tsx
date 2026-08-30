@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, PROFILE_FIELDS } from "../lib/api";
+import { api, isEmptyField, PROFILE_FIELDS } from "../lib/api";
 import type { Candidate, FieldApply } from "../lib/api";
 
 // The scene-tagger resolve flow, in the viewer's stack: candidate grid → per-field ✓/✕ + an
@@ -30,12 +30,26 @@ function DetailsCell({ text }: { text: string }) {
   );
 }
 
+// A {name: scalar} map (custom_fields) — rendered as its own label/value rows.
+function CustomFieldsCell({ value }: { value: Record<string, unknown> }) {
+  return (
+    <dl className="space-y-0.5">
+      {Object.entries(value).map(([k, v]) => (
+        <div key={k} className="flex gap-1">
+          <dt className="text-base-content/60 shrink-0 capitalize">{k.replace(/_/g, " ")}:</dt>
+          <dd className="break-words">{String(v)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 // The candidate's populated fields (superset filtered to non-empty) — only these are shown.
 function populated(c: Candidate): { field: string; value: unknown }[] {
   const out: { field: string; value: unknown }[] = [];
   for (const f of PROFILE_FIELDS) {
     const v = c.data[f];
-    if (v == null || v === "" || (Array.isArray(v) && v.length === 0)) continue;
+    if (isEmptyField(v)) continue;
     out.push({ field: f, value: v });
   }
   return out;
@@ -94,6 +108,9 @@ function ResolvePane({
     }
     if (field === "details") {
       return <DetailsCell text={String(value)} />;
+    }
+    if (field === "custom_fields" && typeof value === "object") {
+      return <CustomFieldsCell value={value as Record<string, unknown>} />;
     }
     return fieldDisplay(value);
   };
