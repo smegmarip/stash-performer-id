@@ -57,3 +57,24 @@ def activate(asset_id: int, body: Activate, db: Database = Depends(get_db)) -> d
 @router.delete("/{asset_id}/activation")
 def deactivate(asset_id: int, db: Database = Depends(get_db)) -> dict:
     return {"ok": True, "affected": db.deactivate_asset(asset_id)}
+
+
+@router.post("/{asset_id}/ignore")
+def ignore(asset_id: int, db: Database = Depends(get_db)) -> dict:
+    """Mark an asset (and its subtree) ignored — removed from triage and scraping."""
+    return {"ok": True, "affected": db.ignore_asset(asset_id, True)}
+
+
+@router.delete("/{asset_id}/ignore")
+def unignore(asset_id: int, db: Database = Depends(get_db)) -> dict:
+    return {"ok": True, "affected": db.ignore_asset(asset_id, False)}
+
+
+class BulkIgnore(BaseModel):
+    ids: list[int]
+    ignored: bool = True
+
+
+@router.post("/ignore")
+def ignore_bulk(body: BulkIgnore, db: Database = Depends(get_db)) -> dict:
+    return {"ok": True, "affected": db.ignore_assets_bulk(body.ids, body.ignored)}

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS asset (
     path              TEXT,
     basename          TEXT,
     thumb_stash_id    TEXT,                    -- Stash image id whose thumbnail represents it
+    ignored           INTEGER NOT NULL DEFAULT 0,  -- excluded from triage + scraping
     evaluated_at      TEXT NOT NULL
 );
 -- Identity key: a Stash entity (type+id) or, lacking one, its path.
@@ -156,6 +157,7 @@ class Database:
         for ddl in (
             "ALTER TABLE asset ADD COLUMN thumb_stash_id TEXT",
             "ALTER TABLE enrichment_profile ADD COLUMN custom_fields TEXT",
+            "ALTER TABLE asset ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 self.conn.execute(ddl)
@@ -387,8 +389,13 @@ class Database:
         if q:
             where.append("(basename LIKE ? OR path LIKE ?)")
             params += [f"%{q}%", f"%{q}%"]
-        if assigned in ("assigned", "unassigned"):
+        # Ignore is orthogonal to assignment: an ignored asset is neither "assigned" nor
+        # "unassigned" — it shows only under the "ignored" filter (and in "all"/None).
+        if assigned == "ignored":
+            where.append("ignored = 1")
+        elif assigned in ("assigned", "unassigned"):
             neg = "NOT " if assigned == "unassigned" else ""
+            where.append("ignored = 0")
             where.append(
                 f"{neg}EXISTS (SELECT 1 FROM name_relationship nr"
                 " WHERE nr.asset_id = asset.id AND nr.active = 1)"
@@ -426,8 +433,8 @@ class Database:
         sort_col = self._ASSET_SORT.get(sort, "path")
         order_sql = "DESC" if order.lower() == "desc" else "ASC"
         assets = self.conn.execute(
-            f"SELECT id, stash_id, path, basename, thumb_stash_id FROM asset WHERE {where}"
-            f" ORDER BY {sort_col} {order_sql} LIMIT ? OFFSET ?",
+            f"SELECT id, stash_id, path, basename, thumb_stash_id, ignored FROM asset"
+            f" WHERE {where} ORDER BY {sort_col} {order_sql} LIMIT ? OFFSET ?",
             [*params, limit, offset],
         ).fetchall()
         cascade_kind = self._CASCADE_KIND.get(resource_type)
@@ -456,6 +463,7 @@ class Database:
                     "resource_type": resource_type,
                     "child_count": child_count,
                     "active": dict(active) if active else None,
+                    "ignored": bool(a["ignored"]),
                 }
             )
         return out
@@ -517,11 +525,14 @@ class Database:
     def activate_name(
         self, asset_id: int, name_id: int, source_level: str, origin_asset_id: int | None = None
     ) -> int:
-        """Set the active name for an asset, cascading onto its members. Returns rows affected."""
+        """Set the active name for an asset, cascading onto its members. Assigning a name also
+        clears any ignore on the targets — the three states (assigned/unassigned/ignored) are
+        mutually exclusive per asset. Returns rows affected."""
         origin = origin_asset_id if origin_asset_id is not None else asset_id
         targets = self._cascade_targets(asset_id)
         for t in targets:
             self.conn.execute("DELETE FROM name_relationship WHERE asset_id = ?", (t,))
+            self.conn.execute("UPDATE asset SET ignored = 0 WHERE id = ?", (t,))
             self.conn.execute(
                 "INSERT INTO name_relationship(name_id, asset_id, active, source_level,"
                 " origin_asset_id, created_at) VALUES (?, ?, 1, ?, ?, ?)",
@@ -536,6 +547,27 @@ class Database:
             self.conn.execute("DELETE FROM name_relationship WHERE asset_id = ?", (t,))
         self.conn.commit()
         return len(targets)
+
+    def ignore_asset(self, asset_id: int, ignored: bool = True) -> int:
+        """Mark an asset ignored (or restore it), cascading over the same subtree as activation.
+
+        Ignoring removes the asset from triage and scraping; it also clears any active
+        assignment on the targets (states are mutually exclusive). Un-ignoring leaves the
+        subtree unassigned. Returns the number of assets affected.
+        """
+        targets = self._cascade_targets(asset_id)
+        for t in targets:
+            if ignored:
+                self.conn.execute("DELETE FROM name_relationship WHERE asset_id = ?", (t,))
+            self.conn.execute(
+                "UPDATE asset SET ignored = ? WHERE id = ?", (1 if ignored else 0, t)
+            )
+        self.conn.commit()
+        return len(targets)
+
+    def ignore_assets_bulk(self, asset_ids: list[int], ignored: bool = True) -> int:
+        """Ignore/un-ignore each asset (with cascade). Returns total assets affected."""
+        return sum(self.ignore_asset(aid, ignored) for aid in asset_ids)
 
     # --- scrape surface (Step 2: image -> performer, via the metadata provider) ---
 
@@ -553,10 +585,13 @@ class Database:
         id); paths are the fallback for assets harvested before an id was known. Paths are unique
         per file, so the path branch resolves the right asset regardless of entity_type.
         """
+        # An ignored asset resolves to nothing — it is excluded from scraping. Ignore cascades to
+        # child images, so this leaf-row check covers a folder ignored above the image.
         asset_id = None
         if stash_id:
             row = self.conn.execute(
-                "SELECT id FROM asset WHERE stash_entity_type = ? AND stash_id = ?",
+                "SELECT id FROM asset WHERE stash_entity_type = ? AND stash_id = ?"
+                " AND ignored = 0",
                 (entity_type, stash_id),
             ).fetchone()
             if row:
@@ -564,8 +599,8 @@ class Database:
         if asset_id is None and paths:
             placeholders = ",".join("?" * len(paths))
             row = self.conn.execute(
-                f"SELECT id FROM asset WHERE resource_type = 'file' AND path IN ({placeholders})"
-                " LIMIT 1",
+                f"SELECT id FROM asset WHERE resource_type = 'file' AND ignored = 0"
+                f" AND path IN ({placeholders}) LIMIT 1",
                 paths,
             ).fetchone()
             if row:

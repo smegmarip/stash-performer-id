@@ -17,6 +17,7 @@ const ASSIGNED = [
   { key: "all", label: "All" },
   { key: "assigned", label: "Assigned" },
   { key: "unassigned", label: "Unassigned" },
+  { key: "ignored", label: "Ignored" },
 ] as const;
 // File assets are either images or scenes; this sub-filter is only shown for the File scope.
 const ENTITY_TYPES = [
@@ -126,6 +127,16 @@ export default function AssetsView() {
     void withBusy(async () => {
       for (const id of ids) await api.deactivate(id);
     });
+  };
+  const batchIgnore = () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    void withBusy(() => api.ignoreBulk(ids, true));
+  };
+  const batchRestore = () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    void withBusy(() => api.ignoreBulk(ids, false));
   };
 
   return (
@@ -249,6 +260,29 @@ export default function AssetsView() {
             <span className="icon-[tabler--x] size-4" />
             Clear assignment
           </button>
+          {assigned === "ignored" ? (
+            <button
+              type="button"
+              className="btn btn-soft btn-sm"
+              title="Restore — return to triage"
+              disabled={busy || selected.size === 0}
+              onClick={batchRestore}
+            >
+              <span className="icon-[tabler--eye] size-4" />
+              Restore
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-soft btn-sm"
+              title="Ignore — remove from triage and scraping"
+              disabled={busy || selected.size === 0}
+              onClick={batchIgnore}
+            >
+              <span className="icon-[tabler--eye-off] size-4" />
+              Ignore
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-ghost btn-sm ms-auto"
@@ -329,13 +363,35 @@ export default function AssetsView() {
                       )}
                     </td>
                     <td>
-                      <AssignCombobox
-                        active={a.active}
-                        options={validNames}
-                        disabled={busy}
-                        onAssign={(id) => void withBusy(() => api.activate(a.asset_id, id, scope))}
-                        onClear={() => void withBusy(() => api.deactivate(a.asset_id))}
-                      />
+                      {a.ignored ? (
+                        <div className="flex items-center gap-2">
+                          <span className="badge badge-sm badge-soft text-base-content/60">
+                            <span className="icon-[tabler--eye-off] size-3.5" />
+                            Ignored
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-soft"
+                            title="Restore — return to triage"
+                            disabled={busy}
+                            onClick={() => void withBusy(() => api.unignore(a.asset_id))}
+                          >
+                            <span className="icon-[tabler--eye] size-4" />
+                            Restore
+                          </button>
+                        </div>
+                      ) : (
+                        <AssignCombobox
+                          active={a.active}
+                          options={validNames}
+                          disabled={busy}
+                          onAssign={(id) =>
+                            void withBusy(() => api.activate(a.asset_id, id, scope))
+                          }
+                          onClear={() => void withBusy(() => api.deactivate(a.asset_id))}
+                          onIgnore={() => void withBusy(() => api.ignore(a.asset_id))}
+                        />
+                      )}
                     </td>
                   </tr>
                 ))}

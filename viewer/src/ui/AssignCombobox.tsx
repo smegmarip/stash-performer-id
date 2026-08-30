@@ -10,12 +10,14 @@ export function AssignCombobox({
   disabled,
   onAssign,
   onClear,
+  onIgnore,
 }: {
   active: Active;
   options: NameRow[];
   disabled: boolean;
   onAssign: (nameId: number) => void;
   onClear: () => void;
+  onIgnore?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -64,7 +66,7 @@ export function AssignCombobox({
 
       {open && (
         <div className="bg-base-100 border-base-content/20 rounded-box absolute z-30 mt-1 w-full border shadow-lg">
-          <div className="p-2">
+          <div className="flex items-center gap-1 p-2">
             <input
               className="input input-sm w-full"
               placeholder="Search names…"
@@ -72,6 +74,19 @@ export function AssignCombobox({
               onChange={(e) => setQuery(e.target.value)}
               autoFocus
             />
+            {onIgnore && (
+              <button
+                type="button"
+                className="btn btn-sm btn-square btn-text text-base-content/60 shrink-0"
+                title="Ignore — remove from triage and scraping"
+                onClick={() => {
+                  setOpen(false);
+                  onIgnore();
+                }}
+              >
+                <span className="icon-[tabler--eye-off] size-4" />
+              </button>
+            )}
           </div>
           <ul className="menu menu-sm max-h-64 w-full flex-nowrap overflow-y-auto p-1 pt-0">
             {active && (

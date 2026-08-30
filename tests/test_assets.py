@@ -81,3 +81,54 @@ def test_activate_replaces(ctx):
     other = client.post("/names", json={"name": "Someone Else"}).json()["id"]
     client.post(f"/assets/{gallery}/activate", json={"name_id": other})
     assert _galleries(client)[0]["active"]["name"] == "Someone Else"
+
+
+def test_ignore_endpoint_cascades_and_filters(ctx):
+    db, client, gallery = ctx
+    r = client.post(f"/assets/{gallery}/ignore").json()
+    assert r["ok"] and r["affected"] == 3  # gallery + 2 images
+
+    # Ignored gallery is out of assigned/unassigned, present under "ignored".
+    assert client.get("/assets", params={"type": "gallery", "assigned": "unassigned"}).json()[
+        "total"
+    ] == 0
+    ign = client.get("/assets", params={"type": "gallery", "assigned": "ignored"}).json()
+    assert ign["total"] == 1 and ign["assets"][0]["ignored"] is True
+    # Member images are ignored too (file scope).
+    assert client.get("/assets", params={"type": "file", "assigned": "ignored"}).json()[
+        "total"
+    ] == 2
+
+    # Un-ignore restores them to the unassigned bucket.
+    client.delete(f"/assets/{gallery}/ignore")
+    assert client.get("/assets", params={"type": "gallery", "assigned": "unassigned"}).json()[
+        "total"
+    ] == 1
+    assert client.get("/assets", params={"type": "gallery", "assigned": "ignored"}).json()[
+        "total"
+    ] == 0
+
+
+def test_ignore_clears_assignment_and_assign_clears_ignore(ctx):
+    db, client, gallery = ctx
+    nid = _name_id(client, "Jane Doe")
+    client.post(f"/assets/{gallery}/activate", json={"name_id": nid})
+    # Ignoring an assigned asset clears the assignment (mutually exclusive states).
+    client.post(f"/assets/{gallery}/ignore")
+    assert db.conn.execute("SELECT COUNT(*) n FROM name_relationship").fetchone()["n"] == 0
+    assert client.get("/assets", params={"type": "gallery", "assigned": "ignored"}).json()[
+        "total"
+    ] == 1
+    # Assigning again clears the ignore.
+    client.post(f"/assets/{gallery}/activate", json={"name_id": nid})
+    g = client.get("/assets", params={"type": "gallery"}).json()["assets"][0]
+    assert g["ignored"] is False and g["active"]["name_id"] == nid
+
+
+def test_ignore_bulk(ctx):
+    _db, client, gallery = ctx
+    r = client.post("/assets/ignore", json={"ids": [gallery], "ignored": True}).json()
+    assert r["ok"] and r["affected"] == 3
+    assert client.get("/assets", params={"type": "gallery", "assigned": "ignored"}).json()[
+        "total"
+    ] == 1

@@ -131,3 +131,25 @@ def test_activation_folder_prefix_does_not_leak_to_siblings(db):
         "SELECT 1 FROM name_relationship WHERE asset_id=? AND active=1", (anna_child,)
     ).fetchone()
     assert leaked is None
+
+
+def test_ignore_cascades_to_subtree_and_survives_reharvest(db):
+    root = "/data/pics/exposed/ncaa/Basketball/Blair Green (UKY)"
+    parent = db.upsert_asset("folder", path=root, basename="Blair Green (UKY)")
+    child = db.upsert_asset("folder", path=f"{root}/P", basename="P")
+    img = db.upsert_asset(
+        "file", stash_entity_type="image", stash_id="i1", path=f"{root}/P/img.jpg"
+    )
+    for f in (parent, child):
+        db.add_relationship(f, img, "folder_image")
+
+    assert db.ignore_asset(parent) == 3  # parent + child folder + image
+    for aid in (parent, child, img):
+        assert db.conn.execute("SELECT ignored FROM asset WHERE id=?", (aid,)).fetchone()[0] == 1
+
+    # Re-harvest (idempotent upsert) must preserve the ignore flag — no reset of prior work.
+    assert db.upsert_asset("folder", path=root, basename="Blair Green (UKY)") == parent
+    assert db.conn.execute("SELECT ignored FROM asset WHERE id=?", (parent,)).fetchone()[0] == 1
+
+    assert db.ignore_asset(parent, False) == 3
+    assert db.conn.execute("SELECT ignored FROM asset WHERE id=?", (img,)).fetchone()[0] == 0

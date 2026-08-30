@@ -27,6 +27,7 @@ export type AssetRow = {
   resource_type: string;
   child_count: number;
   active: { name_id: number; name: string; source_level: string } | null;
+  ignored: boolean;
 };
 
 export type AssetPage = { total: number; assets: AssetRow[] };
@@ -177,6 +178,15 @@ export const api = {
     }),
   deactivate: (assetId: number) =>
     req<{ ok: boolean; affected: number }>(`/assets/${assetId}/activation`, { method: "DELETE" }),
+  ignore: (assetId: number) =>
+    req<{ ok: boolean; affected: number }>(`/assets/${assetId}/ignore`, { method: "POST" }),
+  unignore: (assetId: number) =>
+    req<{ ok: boolean; affected: number }>(`/assets/${assetId}/ignore`, { method: "DELETE" }),
+  ignoreBulk: (ids: number[], ignored: boolean) =>
+    req<{ ok: boolean; affected: number }>("/assets/ignore", {
+      method: "POST",
+      body: JSON.stringify({ ids, ignored }),
+    }),
 
   // --- Enrichment ---
   enrichSources: () => req<{ sources: EnrichSource[] }>("/enrichment/sources"),

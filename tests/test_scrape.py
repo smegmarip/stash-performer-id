@@ -162,3 +162,16 @@ def test_scrape_custom_fields_paragraph_without_details(ctx):
     )
     p = client.post("/scrape/image", json={"id": "i1", "files": []}).json()["performers"][0]
     assert p["details"] == "NCAA — Class: Sr."
+
+
+def test_scrape_ignored_image_returns_empty(ctx):
+    # An assigned image that is then ignored resolves to nothing (removed from scraping).
+    db, client, _nid = ctx
+    assert client.post("/scrape/image", json={"id": "i1", "files": []}).json()["performers"]
+    # Ignore the gallery -> cascades onto image i1.
+    gallery = db.conn.execute(
+        "SELECT id FROM asset WHERE resource_type='gallery'"
+    ).fetchone()["id"]
+    db.ignore_asset(gallery, True)
+    body = client.post("/scrape/image", json={"id": "i1", "files": []}).json()
+    assert body == {"performers": []}
