@@ -6,6 +6,7 @@ activation can cascade onto its images).
 import os
 
 from bridge.app.cache.db import Database
+from bridge.app.harvest.folders import ancestor_dirs
 from bridge.app.harvest.normalize import candidate_parts
 from bridge.app.stash.client import StashClient
 
@@ -81,7 +82,7 @@ def harvest_galleries(
         if not galleries:
             break
         for g in galleries:
-            images += _harvest_one(db, stash, g)
+            images += _harvest_one(db, stash, g, path_prefix)
             seen += 1
             if progress and total:
                 progress(min(seen / total, 1.0))
@@ -94,7 +95,7 @@ def harvest_galleries(
     return {"galleries": seen, "images": images, "new_names": new_names}
 
 
-def _harvest_one(db: Database, stash: StashClient, g: dict) -> int:
+def _harvest_one(db: Database, stash: StashClient, g: dict, root: str | None = None) -> int:
     """Harvest one gallery; returns the number of member-image assets created/seen."""
     folder = g.get("folder")
     files = g.get("files") or []
@@ -119,19 +120,20 @@ def _harvest_one(db: Database, stash: StashClient, g: dict) -> int:
             gallery_asset_id, cand[0], "gallery", gallery_name_src, disambiguation=cand[1]
         )
 
-    return _harvest_gallery_images(db, stash, str(g["id"]), gallery_asset_id)
+    return _harvest_gallery_images(db, stash, str(g["id"]), gallery_asset_id, root=root)
 
 
 def _harvest_gallery_images(
     db: Database, stash: StashClient, gallery_stash_id: str, gallery_asset_id: int,
-    per_page: int = 500,
+    per_page: int = 500, root: str | None = None,
 ) -> int:
-    """For each member image: a file-asset linked to the gallery, and a folder-asset derived
-    from the image's own parent directory (so a gallery may span multiple folders). Returns count.
+    """For each member image: a file-asset linked to the gallery, and a folder-asset for every
+    ancestor directory up to the harvest root (so a name folder above nested media is captured,
+    not just the image's immediate parent). Returns the member-image count.
     """
     page = 1
     count = 0
-    folder_cache: dict[str, int] = {}  # parent path -> folder asset id (per gallery)
+    folder_cache: dict[str, int] = {}  # dir path -> folder asset id (per gallery)
     while True:
         data = stash.query(
             _GALLERY_IMAGES_QUERY,
@@ -156,20 +158,22 @@ def _harvest_gallery_images(
             # Backfill gallery thumbnail from the first member image (if it has no cover).
             db.set_thumb_if_null(gallery_asset_id, img_id)
 
-            if path:
-                parent = os.path.dirname(path)
-                folder_asset_id = folder_cache.get(parent)
+            # Every ancestor folder up to the harvest root gets a candidate, so a name folder
+            # above nested media (…/Blair Green (UKY)/P/instagram/img.jpg) is captured — not
+            # just the leaf. Each folder links to the image, so activating any level cascades.
+            for folder_path in ancestor_dirs(path, root):
+                folder_asset_id = folder_cache.get(folder_path)
                 if folder_asset_id is None:
                     folder_asset_id = db.upsert_asset(
-                        "folder", path=parent, basename=_basename_no_ext(parent)
+                        "folder", path=folder_path, basename=_basename_no_ext(folder_path)
                     )
-                    folder_cache[parent] = folder_asset_id
-                    if (fcand := candidate_parts(_basename_no_ext(parent) or "")):
+                    folder_cache[folder_path] = folder_asset_id
+                    if (fcand := candidate_parts(_basename_no_ext(folder_path) or "")):
                         db.add_candidate(
                             folder_asset_id,
                             fcand[0],
                             "folder",
-                            parent,
+                            folder_path,
                             disambiguation=fcand[1],
                         )
                     # link gallery -> folder (candidate inheritance)

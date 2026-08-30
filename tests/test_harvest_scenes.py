@@ -63,3 +63,34 @@ def test_scene_folder_candidate_cascades_to_scene(tmp_path):
     active = db.lookup_active_name(stash_id="s1", entity_type="scene")
     assert active and active["name"] == "Jane Doe"
     db.close()
+
+
+def test_deep_scene_captures_name_folder_above_leaf(tmp_path):
+    # Scene nested below the subject folder: .../Blair Green (UKY)/P/instagram/clip.mp4.
+    # Every ancestor up to TOP_FOLDER becomes a candidate, so the name folder is captured.
+    db = Database(str(tmp_path / "h.sqlite"))
+    root = "/data/pics/exposed/ncaa"
+    stash = _OnePageStash(
+        [
+            {
+                "id": "s1",
+                "title": None,
+                "files": [{"path": f"{root}/Basketball/Blair Green (UKY)/P/instagram/clip.mp4"}],
+            }
+        ]
+    )
+    harvest_scenes(db, stash, path_prefix=root)
+    names = {n["name"]: n["disambiguation"] for n in db.list_names()}
+    assert names.get("Blair Green") == "UKY"  # the subject folder, not the leaf
+    assert "Basketball" in names  # container levels present too (triaged away)
+    assert "instagram" in names
+    # Activating the name folder cascades to the deeply-nested scene.
+    nid = next(n["id"] for n in db.list_names() if n["name"] == "Blair Green")
+    folder = db.conn.execute(
+        "SELECT id FROM asset WHERE resource_type='folder' AND path=?",
+        (f"{root}/Basketball/Blair Green (UKY)",),
+    ).fetchone()["id"]
+    db.activate_name(folder, nid, "folder")
+    active = db.lookup_active_name(stash_id="s1", entity_type="scene")
+    assert active and active["name"] == "Blair Green"
+    db.close()

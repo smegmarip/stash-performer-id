@@ -10,6 +10,7 @@ performer-named folder can carry its name down to every scene (and image) it con
 import os
 
 from bridge.app.cache.db import Database
+from bridge.app.harvest.folders import ancestor_dirs
 from bridge.app.harvest.normalize import candidate_parts
 from bridge.app.stash.client import StashClient
 
@@ -63,7 +64,7 @@ def harvest_scenes(
         if not scenes:
             break
         for s in scenes:
-            _harvest_one(db, s, folder_cache)
+            _harvest_one(db, s, folder_cache, path_prefix)
             seen += 1
             if progress and total:
                 progress(min(seen / total, 1.0))
@@ -76,10 +77,13 @@ def harvest_scenes(
     return {"scenes": seen, "new_names": new_names}
 
 
-def _harvest_one(db: Database, s: dict, folder_cache: dict[str, int]) -> None:
-    """Harvest one scene: its file-asset (+ file-level title/filename candidate) and, from its
-    parent directory, a folder-asset (+ folder-name candidate) linked so folder activation
-    cascades onto the scene."""
+def _harvest_one(
+    db: Database, s: dict, folder_cache: dict[str, int], root: str | None = None
+) -> None:
+    """Harvest one scene: its file-asset (+ file-level title/filename candidate) and, for every
+    ancestor directory up to the harvest root, a folder-asset (+ folder-name candidate) linked
+    so activation of any level — including a name folder above nested media — cascades onto the
+    scene."""
     files = s.get("files") or []
     path = files[0]["path"] if files else None
     basename = _basename_no_ext(path)
@@ -102,16 +106,16 @@ def _harvest_one(db: Database, s: dict, folder_cache: dict[str, int]) -> None:
 
     if not path:
         return
-    parent = os.path.dirname(path)
-    folder_asset_id = folder_cache.get(parent)
-    if folder_asset_id is None:
-        folder_asset_id = db.upsert_asset(
-            "folder", path=parent, basename=_basename_no_ext(parent)
-        )
-        folder_cache[parent] = folder_asset_id
-        if fcand := candidate_parts(_basename_no_ext(parent) or ""):
-            db.add_candidate(
-                folder_asset_id, fcand[0], "folder", parent, disambiguation=fcand[1]
+    for folder_path in ancestor_dirs(path, root):
+        folder_asset_id = folder_cache.get(folder_path)
+        if folder_asset_id is None:
+            folder_asset_id = db.upsert_asset(
+                "folder", path=folder_path, basename=_basename_no_ext(folder_path)
             )
-    # Reuse the gallery cascade kind: folder activation reaches its member files (images + scenes).
-    db.add_relationship(folder_asset_id, scene_asset_id, "folder_image")
+            folder_cache[folder_path] = folder_asset_id
+            if fcand := candidate_parts(_basename_no_ext(folder_path) or ""):
+                db.add_candidate(
+                    folder_asset_id, fcand[0], "folder", folder_path, disambiguation=fcand[1]
+                )
+        # Reuse the gallery cascade kind: folder activation reaches its member files.
+        db.add_relationship(folder_asset_id, scene_asset_id, "folder_image")
