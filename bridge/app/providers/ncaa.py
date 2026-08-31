@@ -248,12 +248,17 @@ class NcaaProvider:
     label = "NCAA Stats"
     metered = False
 
-    def __init__(self, client=None, min_interval: float = 0.5):
+    def __init__(self, client=None, min_interval: float = 0.5, proxy: str | None = None):
         # A requests-like session: .get/.post(url, ...) -> resp with .status_code/.text/.json().
+        # `proxy` (e.g. the Mullvad domain-routing proxy) routes egress off the app's own IP,
+        # which stats.ncaa.org rate-limits; the proxy decides per-domain what to tunnel.
         if client is None:
             from curl_cffi import requests as curl_requests
 
-            client = curl_requests.Session(impersonate="chrome")
+            session_kwargs: dict = {"impersonate": "chrome"}
+            if proxy:
+                session_kwargs["proxies"] = {"http": proxy, "https": proxy}
+            client = curl_requests.Session(**session_kwargs)
         self._client = client
         self._min_interval = min_interval
         self._last_ts = 0.0

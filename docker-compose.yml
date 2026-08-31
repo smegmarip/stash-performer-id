@@ -22,6 +22,9 @@ services:
       # a shared network, no IP needed. If FlareSolverr already runs on the same network, just set
       # this to its URL; if not, start the bundled sidecar with `--profile flaresolverr` (below).
       - FLARESOLVERR_URL=${FLARESOLVERR_URL:-http://flaresolverr:8191/v1}
+      # Optional HTTP proxy for the NCAA source (stats.ncaa.org rate-limits by IP). Point at the
+      # Mullvad domain-routing proxy on the shared network, e.g. http://stash-mullvad-proxy:11001.
+      - NCAA_PROXY=${NCAA_PROXY:-}
       - TOP_FOLDER=${TOP_FOLDER:-}
       - MEDIA_ROOT=/data
       - DB_PATH=${DB_PATH:-/cache/stash-performer-id.sqlite}

@@ -953,3 +953,25 @@ def test_ncaa_school_hint_site_fallback_for_uncovered_sport():
     assert r.custom_fields["ncaa_hometown"] == "Mobile, AL"
     assert r.country == "US"  # AL -> US state
     assert "https://tide.test/sports/dance/roster/abi-beckham/44" in r.urls
+
+
+def test_ncaa_proxy_wired_into_session(monkeypatch):
+    # A configured proxy must reach the curl_cffi Session as proxies={http,https}.
+    from curl_cffi import requests as curl_requests
+
+    captured = {}
+
+    class _FakeSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(curl_requests, "Session", _FakeSession)
+    NcaaProvider(proxy="http://stash-mullvad-proxy:11001")
+    assert captured["proxies"] == {
+        "http": "http://stash-mullvad-proxy:11001",
+        "https": "http://stash-mullvad-proxy:11001",
+    }
+
+    captured.clear()
+    NcaaProvider()  # no proxy -> no proxies kwarg (direct, unchanged default)
+    assert "proxies" not in captured

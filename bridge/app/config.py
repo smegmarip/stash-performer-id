@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     parse_bot_api_key: SecretStr | None = None
     parse_bot_budget: int = 199  # soft credit ceiling for metered parse.bot calls
     flaresolverr_url: str | None = None  # e.g. http://flaresolverr:8191/v1 (Babepedia Cloudflare)
+    # HTTP proxy for the NCAA source (stats.ncaa.org rate-limits by IP). e.g. the Mullvad
+    # domain-routing proxy: http://stash-mullvad-proxy:11001 — route stats.ncaa.org through a
+    # tunnel in its dashboard; unmatched domains egress direct. Empty = direct (default).
+    ncaa_proxy: str | None = None
 
     # --- Harvest ---
     top_folder: str | None = None  # one root, or several separated by ':' (see top_folders)

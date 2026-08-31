@@ -23,7 +23,7 @@ register(WikidataProvider())
 register(BabepediaProvider(flaresolverr_url=_settings.flaresolverr_url))
 _key = _settings.parse_bot_api_key
 register(ParseBotProvider(_key.get_secret_value() if _key else None))
-register(NcaaProvider())
+register(NcaaProvider(proxy=_settings.ncaa_proxy))
 
 __all__ = [
     "Provider",
