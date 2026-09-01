@@ -21,7 +21,10 @@ import sys
 import urllib.error
 import urllib.request
 
-_KINDS = {"image", "scene"}
+# The --kind arg → the service endpoint path. image/scene are fragment scrapers (stdin = an
+# image/scene fragment → {performers:[…]}); performer-url is performerByURL (stdin = {"url":…}
+# → a single ScrapedPerformer).
+_KINDS = {"image": "image", "scene": "scene", "performer-url": "performer"}
 
 # Stash, reached from where the scraper runs (Stash invokes us in-process, so localhost).
 STASH_URL = os.environ.get("STASH_URL", "http://localhost:9999").rstrip("/")
@@ -89,19 +92,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="stash-performer-id-scrape")
     parser.add_argument("--kind", choices=sorted(_KINDS), default="image")
     args = parser.parse_args()
+    endpoint = _KINDS[args.kind]
 
     base = _resolve_base()  # resolved per invocation (lazy — keeps import side-effect-free)
     timeout = float(os.environ.get("STASH_PERFORMER_ID_TIMEOUT", "15"))
+    # performerByURL wants a bare ScrapedPerformer; the fragment scrapers want {performers:[…]}.
+    empty = "{}" if args.kind == "performer-url" else json.dumps({"performers": []})
     raw = sys.stdin.read()
     try:
         fragment = json.loads(raw) if raw.strip() else {}
     except json.JSONDecodeError as e:
-        print(f"[stash-performer-id] bad fragment JSON: {e}", file=sys.stderr)
-        print(json.dumps({"performers": []}))
+        print(f"[stash-performer-id] bad input JSON: {e}", file=sys.stderr)
+        print(empty)
         return
 
     req = urllib.request.Request(
-        f"{base}/scrape/{args.kind}",
+        f"{base}/scrape/{endpoint}",
         data=json.dumps(fragment).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -111,12 +117,12 @@ def main() -> None:
             body = resp.read().decode("utf-8")
     except (urllib.error.URLError, OSError) as e:
         # Fail soft: log to stderr (Stash surfaces it), emit an empty result so the scrape
-        # doesn't error out the tagger.
+        # doesn't error out.
         print(f"[stash-performer-id] service unreachable at {base}: {e}", file=sys.stderr)
-        print(json.dumps({"performers": []}))
+        print(empty)
         return
 
-    # Pass the service's ScrapedImage/ScrapedScene through verbatim (already the right shape).
+    # Pass the service's ScrapedImage/ScrapedScene/ScrapedPerformer through verbatim.
     sys.stdout.write(body)
 
 

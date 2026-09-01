@@ -175,3 +175,41 @@ def test_scrape_ignored_image_returns_empty(ctx):
     db.ignore_asset(gallery, True)
     body = client.post("/scrape/image", json={"id": "i1", "files": []}).json()
     assert body == {"performers": []}
+
+
+def test_scrape_performer_by_url(ctx, monkeypatch):
+    # performerByURL: the endpoint delegates to the ncaa provider's scrape_bio, maps hometown ->
+    # disambiguation, keeps native ScrapedPerformer fields, drops NCAA custom fields.
+    from bridge.app.providers.models import PerformerData
+
+    _db, client, _nid = ctx
+    pd = PerformerData(
+        source="ncaa", source_entity_id="https://x/sports/wvb/roster/jane-doe/9",
+        name="Jane Doe", gender="Female", birthdate="2002-03-14",
+        country="United States of America", height="180",
+        custom_fields={"ncaa_hometown": "Fort Myers, Fla.", "ncaa_class": "Senior"},
+        images=["https://images.sidearmdev.com/jane.jpg"],
+        urls=["https://x/sports/wvb/roster/jane-doe/9"],
+    )
+
+    class _FakeNcaa:
+        id = "ncaa"
+
+        def scrape_bio(self, url):
+            return pd if "roster" in url else None
+
+    monkeypatch.setattr("bridge.app.providers.get_provider", lambda s: _FakeNcaa())
+    sp = client.post(
+        "/scrape/performer", json={"url": "https://x/sports/wvb/roster/jane-doe/9"}
+    ).json()
+    assert sp["name"] == "Jane Doe"
+    assert "remote_site_id" not in sp  # stash-box concept; absent for a script scraper
+    assert sp["disambiguation"] == "Fort Myers, Fla."  # hometown -> disambiguation
+    assert sp["gender"] == "Female" and sp["birthdate"] == "2002-03-14"
+    assert sp["country"] == "United States of America" and sp["height"] == "180"
+    assert sp["image"].startswith("http") and sp["images"]
+    assert "ncaa_class" not in sp and "custom_fields" not in sp  # extras dropped
+
+    # A non-bio URL -> empty object (Stash renders "no result").
+    empty = client.post("/scrape/performer", json={"url": "https://x/about"}).json()
+    assert empty == {}

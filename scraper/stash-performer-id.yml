@@ -23,3 +23,14 @@ sceneByFragment:
     - stash-performer-id-scrape.py
     - --kind
     - scene
+# Scrape Performer from URL: parse a Sidearm college athletics roster-bio page (JSON-first) into
+# a ScrapedPerformer. `url` matches by substring, so any /sports/*/roster/ bio URL is offered.
+performerByURL:
+  - action: script
+    url:
+      - /roster/
+    script:
+      - python3
+      - stash-performer-id-scrape.py
+      - --kind
+      - performer-url

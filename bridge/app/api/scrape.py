@@ -115,3 +115,53 @@ def scrape_scene(fragment: Fragment, db: Database = Depends(get_db)) -> dict:
     """`sceneByFragment` → the scene's active performer as a ScrapedScene (same `{performers}`
     shape as ScrapedImage)."""
     return _resolve(db, "scene", fragment)
+
+
+# Native ScrapedPerformer scalar fields we emit from a Sidearm bio scrape. `hometown` maps to
+# `disambiguation`; the NCAA-specific custom fields (position/class/jersey/high school/major/…)
+# have no ScrapedPerformer home and are intentionally dropped.
+_URL_SCALARS = ("gender", "birthdate", "country", "height", "weight", "details")
+
+
+def _to_scraped_performer(p) -> dict:
+    """A source-neutral PerformerData → a ScrapedPerformer dict (performerByURL shape).
+
+    No `remote_site_id`: that field is a stash-box concept (it pairs with a box `endpoint` to
+    form a stash_id). A script scraper has no endpoint, so returning it sends Stash down the
+    endpoint-pairing path and crashes the scrape dialog on apply.
+    """
+    sp: dict = {"name": p.name}
+    hometown = p.custom_fields.get("ncaa_hometown")
+    if hometown:
+        sp["disambiguation"] = hometown
+    for field in _URL_SCALARS:
+        if (val := getattr(p, field, None)) not in (None, ""):
+            sp[field] = val
+    if p.urls:
+        sp["urls"] = p.urls
+    if p.images:
+        # Route through the image proxy so Stash can fetch on create (same as the merge path).
+        imgs = [proxy_image_url(u) for u in p.images if u]
+        if imgs:
+            sp["images"] = imgs
+            sp["image"] = imgs[0]
+    return sp
+
+
+class UrlBody(BaseModel, extra="ignore"):
+    url: str | None = None
+
+
+@router.post("/performer")
+def scrape_performer(body: UrlBody) -> dict:
+    """`performerByURL` → parse a Sidearm roster-bio page into a ScrapedPerformer.
+
+    Reuses the NCAA source's Sidearm extraction (JSON-first). Returns `{}` when the URL is not a
+    parseable bio page, which Stash renders as "no result".
+    """
+    from bridge.app.providers import get_provider
+
+    if not body.url:
+        return {}
+    p = get_provider("ncaa").scrape_bio(body.url)
+    return _to_scraped_performer(p) if p else {}

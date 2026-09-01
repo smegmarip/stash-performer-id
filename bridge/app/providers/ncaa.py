@@ -81,6 +81,11 @@ _MAX_SITE_ROSTERS = 30  # bound on roster pages scanned per school-hint fallback
 # The search page appends the full org <select> in a JS string (quotes escaped) — every org id
 # with its NCAA short display name ("Wisconsin", "App State", "Kansas St.").
 _ORG_OPTION = re.compile(r'<option value=\\?"(\d+)\\?">(.*?)<')
+# og:title on a Sidearm bio page leads with the athlete's name ("Macy Jerger - 2018-19 - …").
+_OG_TITLE = re.compile(
+    r'<meta[^>]*?(?:property|name)="og:title"[^>]*?content="([^"]+)"'
+    r'|<meta[^>]*?content="([^"]+)"[^>]*?(?:property|name)="og:title"'
+)
 
 # Abbreviations sites use in sport slugs, keyed by the default slug's dehyphenated base.
 _SLUG_ALIASES = {
@@ -346,6 +351,37 @@ def _nuxt_player(page: str, player_id: str | None) -> dict | None:
             node = _devalue_resolve(arr, idx)
             if str(node.get("rosterPlayerId")) == player_id or str(node.get("id")) == player_id:
                 return node
+    return None
+
+
+def _sidearm_name(page: str, url: str, node: dict | None) -> str | None:
+    """The athlete's name for a bio page: the JSON node (nextgen), else the og:title lead
+    segment, else the humanized URL name-slug."""
+    if node:
+        name = f"{(node.get('firstName') or '').strip()} {(node.get('lastName') or '').strip()}"
+        if name.strip():
+            return name.strip()
+    if m := _OG_TITLE.search(page):
+        title = unescape(m.group(1) or m.group(2)).split(" - ")[0].strip()
+        if title:
+            return title
+    # /roster/{name-slug}/{id} or /roster[/season/…]/player/{name-slug}
+    if m := re.search(r"/roster/(?:season/[^/]+/)?(?:player/)?([a-z][a-z0-9-]+)", url):
+        slug = m.group(1)
+        if not slug.isdigit():
+            return slug.replace("-", " ").title()
+    return None
+
+
+def _sidearm_gender(url: str, node: dict | None) -> str | None:
+    """Female/Male from the node's gender flag, else the URL sport slug's gender prefix."""
+    g = (node or {}).get("gender")
+    if isinstance(g, str) and g.strip() in ("F", "M"):
+        return "Female" if g.strip() == "F" else "Male"
+    if re.search(r"/sports/womens?-|/sports/w[a-z]{2,4}/", url):
+        return "Female"
+    if re.search(r"/sports/mens?-|/sports/m[a-z]{2,4}/", url):
+        return "Male"
     return None
 
 
@@ -791,3 +827,21 @@ class NcaaProvider:
         hometown = str(p.custom_fields.get("ncaa_hometown") or "")
         if not p.country and "," in hometown and _is_us_state(hometown.rsplit(",", 1)[-1]):
             p.country = "United States of America"
+
+    def scrape_bio(self, url: str) -> PerformerData | None:
+        """Scrape a Sidearm roster-bio page directly (Stash performerByURL). Fetches `url`,
+        derives the athlete's name, and reuses the shared bio extraction (JSON-first). Returns
+        a fully-built PerformerData, or None if the page yields no name (not a bio page)."""
+        resp = self._fetch(url)
+        if resp is None or getattr(resp, "status_code", 0) != 200:
+            return None
+        page = resp.text
+        pid = _TRAILING_ID.search(url)
+        node = _nuxt_player(page, pid.group(1) if pid else None)
+        name = _sidearm_name(page, url, node)
+        if not name:
+            return None
+        p = PerformerData(source=self.id, source_entity_id=url, name=name)
+        p.gender = _sidearm_gender(url, node)
+        self._apply_bio(p, page, url)
+        return p
