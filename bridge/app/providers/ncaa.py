@@ -10,16 +10,24 @@ deterministic because the career-cell org ids are the same NCAA org ids the memb
 /sports/{slug}/roster/{season} → /roster/{name-slug}/{id} URL structure; non-Sidearm schools
 simply skip.
 
+Bio extraction is JSON-first: nextgen Sidearm hydrates the athlete's fields from a Nuxt
+devalue payload (a flat index-referenced array) client-side, so the fields are NOT in the
+server HTML — `_nuxt_player` resolves the node matched by the roster-player id in the URL (the
+authoritative, typed source). Classic Sidearm / WMT / PrestoSports pages that server-render the
+bio fall back to HTML label extraction. The photo always comes from the share-image meta tag.
+
 The site sits behind Akamai, which rejects plain-requests/cloudscraper TLS fingerprints at the
 edge (FlareSolverr doesn't apply — it solves Cloudflare, not Akamai), so the default client is
 curl_cffi impersonating Chrome. Player pages additionally serve a JS-free proof-of-work
 interstitial ("bm-verify"), solved inline by `_solve_interstitial`. See docs/ENRICHMENT.md §3.
 """
 
+import json
 import re
 import threading
 import time
 import unicodedata
+from datetime import datetime
 from html import unescape
 from typing import NamedTuple
 
@@ -95,10 +103,35 @@ _SLUG_ALIASES = {
     "beachvolleyball": {"bvb", "beach"},
 }
 
+# US states for country detection from a "City, State" hometown. Three spellings appear across
+# sources: 2-letter postal (stats.ncaa.org), AP-style abbreviations and full names (Sidearm).
 _US_STATES = frozenset(
     "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH "
     "NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split()
 )
+_US_STATES_AP = frozenset(
+    s.lower()
+    for s in (
+        "Ala. Alaska Ariz. Ark. Calif. Colo. Conn. Del. D.C. Fla. Ga. Hawaii Idaho Ill. Ind. "
+        "Iowa Kan. Ky. La. Maine Md. Mass. Mich. Minn. Miss. Mo. Mont. Neb. Nev. N.H. N.J. "
+        "N.M. N.Y. N.C. N.D. Ohio Okla. Ore. Pa. R.I. S.C. S.D. Tenn. Texas Utah Vt. Va. Wash. "
+        "W.Va. Wis. Wyo."
+    ).split()
+    + [
+        "alabama", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware",
+        "florida", "georgia", "illinois", "indiana", "kansas", "kentucky", "louisiana",
+        "maryland", "massachusetts", "michigan", "minnesota", "mississippi", "missouri",
+        "montana", "nebraska", "nevada", "new hampshire", "new jersey", "new mexico",
+        "new york", "north carolina", "north dakota", "oklahoma", "oregon", "pennsylvania",
+        "rhode island", "south carolina", "south dakota", "tennessee", "vermont", "virginia",
+        "washington", "west virginia", "wisconsin", "wyoming",
+    ]
+)
+
+
+def _is_us_state(token: str) -> bool:
+    t = token.strip()
+    return t in _US_STATES or t.lower() in _US_STATES_AP
 
 # stats.ncaa.org sport codes → Sidearm's default sport slugs. Slugs occasionally differ per
 # site; a miss just skips the roster hop.
@@ -241,6 +274,79 @@ def _height_cm(value: str | None) -> str | None:
     if not value or not (m := _HEIGHT.match(value.strip())):
         return None
     return str(round((int(m.group(1)) * 12 + int(m.group(2))) * 2.54))
+
+
+def _height_cm_ft_in(feet, inches) -> str | None:
+    """cm from separate feet/inches values (Sidearm's heightFeet/heightInches)."""
+    try:
+        ft, inch = int(feet), int(inches or 0)
+    except (TypeError, ValueError):
+        return None
+    return str(round((ft * 12 + inch) * 2.54)) if ft else None
+
+
+def _weight_kg(value) -> str | None:
+    """kg from a Sidearm weight (pounds, e.g. '150' or '150 lbs')."""
+    if not value or not (m := re.search(r"\d+", str(value))):
+        return None
+    lbs = int(m.group(0))
+    return str(round(lbs * 0.453592)) if lbs else None
+
+
+def _iso_date(value) -> str | None:
+    """ISO date from common Sidearm birthDate formats, else None."""
+    if not value or not isinstance(value, str):
+        return None
+    v = value.strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y", "%m-%d-%Y"):
+        try:
+            return datetime.strptime(v, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+# The Nuxt app-state payload (devalue-serialized: dict/list values are indices into a flat
+# array). Sidearm nextgen roster-bio pages hydrate the athlete's fields from it client-side, so
+# the fields are NOT in the server HTML — the payload is the authoritative source.
+_NUXT_JSON = re.compile(r'<script type="application/json"[^>]*>(.*?)</script>', re.S)
+_TRAILING_ID = re.compile(r"/(\d+)/?$")
+
+
+def _devalue_resolve(arr: list, i, seen: frozenset = frozenset(), depth: int = 0):
+    """Resolve one devalue node: replace integer references with the values they point at."""
+    if not isinstance(i, int) or i < 0 or i >= len(arr) or i in seen or depth > 8:
+        return None if isinstance(i, int) else i
+    seen = seen | {i}
+    v = arr[i]
+    if isinstance(v, dict):
+        return {k: _devalue_resolve(arr, x, seen, depth + 1) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_devalue_resolve(arr, x, seen, depth + 1) for x in v]
+    return v
+
+
+def _nuxt_player(page: str, player_id: str | None) -> dict | None:
+    """The athlete's resolved player node from a Sidearm nextgen bio page, matched by the
+    roster-player id in the URL (so we pick this player, never a sibling). None if the page
+    carries no Nuxt payload (older "classic" Sidearm) or no matching node."""
+    if not player_id:
+        return None
+    m = _NUXT_JSON.search(page)
+    if not m:
+        return None
+    try:
+        arr = json.loads(m.group(1))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(arr, list):
+        return None
+    for idx, x in enumerate(arr):
+        if isinstance(x, dict) and "firstName" in x and ("rosterPlayerId" in x or "id" in x):
+            node = _devalue_resolve(arr, idx)
+            if str(node.get("rosterPlayerId")) == player_id or str(node.get("id")) == player_id:
+                return node
+    return None
 
 
 class NcaaProvider:
@@ -443,8 +549,8 @@ class NcaaProvider:
 
         p.height = _height_cm(bio.get("Height")) or p.height
         hometown = bio.get("Hometown") or ""
-        if hometown.rsplit(",", 1)[-1].strip() in _US_STATES:
-            p.country = "US"
+        if "," in hometown and _is_us_state(hometown.rsplit(",", 1)[-1]):
+            p.country = "United States of America"
 
         for key, cf_key in (
             ("Position #", "ncaa_position"),
@@ -611,7 +717,12 @@ class NcaaProvider:
 
     def _apply_bio(self, p: PerformerData, page: str, url: str) -> None:
         """Fold a Sidearm roster-bio page into the candidate; stats.ncaa.org data wins on
-        conflict (only absent fields are filled)."""
+        conflict (only absent fields are filled).
+
+        The photo always comes from the share-image meta tag (a full CDN URL). Bio fields come
+        from the Nuxt payload node when present (nextgen Sidearm — authoritative, typed) and fall
+        back to HTML label extraction otherwise (classic Sidearm / WMT / PrestoSports).
+        """
         for pattern in _SHARE_IMAGES:
             m = pattern.search(page)
             if not m:
@@ -623,6 +734,43 @@ class NcaaProvider:
                 break
         if url not in p.urls:
             p.urls.append(url)
+
+        pid = _TRAILING_ID.search(url)
+        node = _nuxt_player(page, pid.group(1) if pid else None)
+        if node is not None:
+            self._apply_bio_json(p, node)
+        else:
+            self._apply_bio_html(p, page)
+
+    def _set_cf(self, p: PerformerData, key: str, value) -> None:
+        """Fill a custom field only if empty and the value is a non-blank scalar."""
+        if not p.custom_fields.get(key) and isinstance(value, str) and value.strip():
+            p.custom_fields[key] = value.strip()
+
+    def _apply_bio_json(self, p: PerformerData, node: dict) -> None:
+        """Map the Nuxt player node onto the candidate (only absent fields; gap-fill)."""
+        self._set_cf(p, "ncaa_position", node.get("positionLong") or node.get("position"))
+        self._set_cf(p, "ncaa_class", node.get("academicYearLong") or node.get("academicYear"))
+        self._set_cf(p, "ncaa_jersey", node.get("jerseyNumber"))
+        self._set_cf(p, "ncaa_hometown", node.get("hometown"))
+        self._set_cf(p, "ncaa_high_school", node.get("highSchool"))
+        self._set_cf(p, "ncaa_major", node.get("major"))
+        self._set_cf(p, "ncaa_previous_school", node.get("previousSchool"))
+        if not p.height:
+            p.height = _height_cm_ft_in(node.get("heightFeet"), node.get("heightInches"))
+        if not p.weight:
+            p.weight = _weight_kg(node.get("weight"))
+        if not p.birthdate:
+            p.birthdate = _iso_date(node.get("birthDate"))
+        if not p.details and isinstance(node.get("bio"), str):
+            bio = re.sub(r"<[^>]+>", " ", node["bio"])  # bio may carry inline HTML
+            bio = unescape(re.sub(r"\s+", " ", bio)).strip()
+            if bio:
+                p.details = bio
+        self._apply_country(p)
+
+    def _apply_bio_html(self, p: PerformerData, page: str) -> None:
+        """Classic-Sidearm fallback: flattened-text label extraction."""
         text = re.sub(r"<(script|style).*?</\1>", "", page, flags=re.S)
         text = unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text)))
         for label, cf_key in (
@@ -636,6 +784,10 @@ class NcaaProvider:
                 p.custom_fields[cf_key] = val
         if not p.height and (h := _bio_field(text, "Height")):
             p.height = _height_cm(h)
+        self._apply_country(p)
+
+    @staticmethod
+    def _apply_country(p: PerformerData) -> None:
         hometown = str(p.custom_fields.get("ncaa_hometown") or "")
-        if not p.country and hometown.rsplit(",", 1)[-1].strip() in _US_STATES:
-            p.country = "US"
+        if not p.country and "," in hometown and _is_us_state(hometown.rsplit(",", 1)[-1]):
+            p.country = "United States of America"

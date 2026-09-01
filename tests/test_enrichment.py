@@ -656,6 +656,64 @@ def _ncaa(client):
     return NcaaProvider(client=client, min_interval=0)
 
 
+def test_ncaa_bio_json_first_extraction():
+    # Nextgen Sidearm: bio fields come from the Nuxt devalue payload (node matched by URL id),
+    # never the HTML. devalue = [rootMap, ...values]; dict values are indices into the array.
+    import json
+
+    from bridge.app.providers.models import PerformerData
+    from bridge.app.providers.ncaa import NcaaProvider
+
+    # Real devalue stores EVERY value by index (verified against live pages), integers included.
+    # arr[0] is the root; the node at index 1 references its field values by array position.
+    node = {
+        "firstName": 2, "lastName": 3, "rosterPlayerId": 4,
+        "heightFeet": 5, "heightInches": 6, "weight": 7, "birthDate": 8,
+        "academicYearLong": 9, "positionLong": 10, "jerseyNumber": 11,
+        "hometown": 12, "highSchool": 13, "previousSchool": 14, "bio": 15,
+    }
+    arr = [
+        {"root": 1}, node, "Macy", "Jerger", 2924, 6, 1, "150 lbs", "3/14/2002",
+        "Senior", "Outside Hitter", "1", "Fort Myers, Fla.", "Fort Myers", "Some JC",
+        "<p>A standout on the sand.</p>",
+    ]
+    page = (
+        '<html><head><meta property="og:image" content="https://cdn/macy.jpg"></head>'
+        '<body><script type="application/json">' + json.dumps(arr) + "</script></body></html>"
+    )
+    prov = NcaaProvider.__new__(NcaaProvider)
+    p = PerformerData(source="ncaa", source_entity_id="x", name="Macy Jerger")
+    prov._apply_bio(p, page, "https://seminoles.com/sports/wbvb/roster/macy-jerger/2924")
+
+    assert p.height == "185"  # 6-1 -> cm from heightFeet/heightInches
+    assert p.weight == "68"  # 150 lbs -> kg
+    assert p.birthdate == "2002-03-14"  # m/d/Y -> ISO
+    assert p.country == "United States of America"  # "Fla." AP abbreviation
+    assert p.details == "A standout on the sand."  # bio HTML stripped
+    assert p.images == ["https://cdn/macy.jpg"]  # photo from meta, not JSON path
+    assert p.custom_fields["ncaa_position"] == "Outside Hitter"
+    assert p.custom_fields["ncaa_class"] == "Senior"
+    assert p.custom_fields["ncaa_previous_school"] == "Some JC"
+
+
+def test_ncaa_bio_html_fallback_when_no_payload():
+    # Classic Sidearm (no Nuxt payload) -> HTML label extraction still runs.
+    from bridge.app.providers.models import PerformerData
+    from bridge.app.providers.ncaa import NcaaProvider
+
+    page = (
+        '<html><head><meta name="og:image" content="https://cdn/x.jpg"></head><body>'
+        "<span>Position</span><span>Setter</span><span>Hometown</span><span>Reno, Nev.</span>"
+        "</body></html>"
+    )
+    prov = NcaaProvider.__new__(NcaaProvider)
+    p = PerformerData(source="ncaa", source_entity_id="x", name="X")
+    prov._apply_bio(p, page, "https://appstatesports.com/sports/wvb/roster/x/9")
+    assert p.custom_fields["ncaa_position"] == "Setter"
+    assert p.country == "United States of America"  # "Nev." AP abbreviation
+    assert p.images == ["https://cdn/x.jpg"]
+
+
 def test_ncaa_maps_search_and_sorts_recent_first():
     out = _ncaa(_FakeNcaaClient()).search("Liz Gregorski")
     assert len(out) == 2
@@ -665,7 +723,7 @@ def test_ncaa_maps_search_and_sorts_recent_first():
     assert r.gender == "Female"  # from "Women's" in the team names
     assert r.career_start == "2019" and r.career_end == "2025"  # "2024-25" ends in 2025
     assert r.height == "180"  # 5-11 -> cm
-    assert r.country == "US"  # "Appleton, WI" -> US state
+    assert r.country == "United States of America"  # "Appleton, WI" -> US state
     assert r.urls[0] == "https://stats.ncaa.org/players/8905834"
     assert "Wisconsin Women's Volleyball" in r.disambiguation
     assert "2019–2025" in r.disambiguation
@@ -951,7 +1009,7 @@ def test_ncaa_school_hint_site_fallback_for_uncovered_sport():
     assert r.disambiguation == "University of Alabama Dance"
     assert r.images == ["https://tide.test/abi.jpg"]
     assert r.custom_fields["ncaa_hometown"] == "Mobile, AL"
-    assert r.country == "US"  # AL -> US state
+    assert r.country == "United States of America"  # AL -> US state
     assert "https://tide.test/sports/dance/roster/abi-beckham/44" in r.urls
 
 
