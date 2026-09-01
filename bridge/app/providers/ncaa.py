@@ -108,36 +108,6 @@ _SLUG_ALIASES = {
     "beachvolleyball": {"bvb", "beach"},
 }
 
-# US states for country detection from a "City, State" hometown. Three spellings appear across
-# sources: 2-letter postal (stats.ncaa.org), AP-style abbreviations and full names (Sidearm).
-_US_STATES = frozenset(
-    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH "
-    "NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split()
-)
-_US_STATES_AP = frozenset(
-    s.lower()
-    for s in (
-        "Ala. Alaska Ariz. Ark. Calif. Colo. Conn. Del. D.C. Fla. Ga. Hawaii Idaho Ill. Ind. "
-        "Iowa Kan. Ky. La. Maine Md. Mass. Mich. Minn. Miss. Mo. Mont. Neb. Nev. N.H. N.J. "
-        "N.M. N.Y. N.C. N.D. Ohio Okla. Ore. Pa. R.I. S.C. S.D. Tenn. Texas Utah Vt. Va. Wash. "
-        "W.Va. Wis. Wyo."
-    ).split()
-    + [
-        "alabama", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware",
-        "florida", "georgia", "illinois", "indiana", "kansas", "kentucky", "louisiana",
-        "maryland", "massachusetts", "michigan", "minnesota", "mississippi", "missouri",
-        "montana", "nebraska", "nevada", "new hampshire", "new jersey", "new mexico",
-        "new york", "north carolina", "north dakota", "oklahoma", "oregon", "pennsylvania",
-        "rhode island", "south carolina", "south dakota", "tennessee", "vermont", "virginia",
-        "washington", "west virginia", "wisconsin", "wyoming",
-    ]
-)
-
-
-def _is_us_state(token: str) -> bool:
-    t = token.strip()
-    return t in _US_STATES or t.lower() in _US_STATES_AP
-
 # stats.ncaa.org sport codes → Sidearm's default sport slugs. Slugs occasionally differ per
 # site; a miss just skips the roster hop.
 _SPORT_SLUGS = {
@@ -264,6 +234,20 @@ def _discover_slugs(page: str, default_slug: str, gender: str) -> list[str]:
 def _bio_field(text: str, label: str) -> str | None:
     m = re.search(rf"\b{label}\s*:?\s+(.{{1,60}}?)(?=\s+{_BIO_STOP}\b|$)", text)
     return m.group(1).strip(" :·|-") if m else None
+
+
+def _html_bio(page: str) -> str | None:
+    """The bio prose from a classic-Sidearm page's `#sidearm-roster-player-bio` container."""
+    try:
+        el = html.fromstring(page).get_element_by_id("sidearm-roster-player-bio", None)
+    except (ValueError, TypeError):
+        return None
+    if el is None:
+        return None
+    text = re.sub(r"\s+", " ", el.text_content()).strip()
+    # The container leads with a "Biography" heading; drop it.
+    text = re.sub(r"^Biography\s+", "", text)
+    return text or None
 
 
 def _gender(teams: list[str]) -> str | None:
@@ -584,9 +568,7 @@ class NcaaProvider:
             return
 
         p.height = _height_cm(bio.get("Height")) or p.height
-        hometown = bio.get("Hometown") or ""
-        if "," in hometown and _is_us_state(hometown.rsplit(",", 1)[-1]):
-            p.country = "United States of America"
+        self._apply_country(p)
 
         for key, cf_key in (
             ("Position #", "ncaa_position"),
@@ -820,12 +802,15 @@ class NcaaProvider:
                 p.custom_fields[cf_key] = val
         if not p.height and (h := _bio_field(text, "Height")):
             p.height = _height_cm(h)
+        if not p.details and (bio := _html_bio(page)):
+            p.details = bio
         self._apply_country(p)
 
     @staticmethod
     def _apply_country(p: PerformerData) -> None:
-        hometown = str(p.custom_fields.get("ncaa_hometown") or "")
-        if not p.country and "," in hometown and _is_us_state(hometown.rsplit(",", 1)[-1]):
+        # NCAA/Sidearm are US college athletics — country is always the US (hometowns often
+        # omit the state, so state-detection would leave it blank).
+        if not p.country:
             p.country = "United States of America"
 
     def scrape_bio(self, url: str) -> PerformerData | None:

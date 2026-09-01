@@ -118,9 +118,9 @@ def scrape_scene(fragment: Fragment, db: Database = Depends(get_db)) -> dict:
 
 
 # Native ScrapedPerformer scalar fields we emit from a Sidearm bio scrape. `hometown` maps to
-# `disambiguation`; the NCAA-specific custom fields (position/class/jersey/high school/major/…)
-# have no ScrapedPerformer home and are intentionally dropped.
-_URL_SCALARS = ("gender", "birthdate", "country", "height", "weight", "details")
+# `disambiguation`; the other NCAA custom fields (position/class/jersey/high school/major/…)
+# have no ScrapedPerformer home, so they are folded into `details` as a summary (below).
+_URL_SCALARS = ("gender", "birthdate", "country", "height", "weight")
 
 
 def _to_scraped_performer(p) -> dict:
@@ -137,6 +137,13 @@ def _to_scraped_performer(p) -> dict:
     for field in _URL_SCALARS:
         if (val := getattr(p, field, None)) not in (None, ""):
             sp[field] = val
+    # details = the NCAA metadata summary (custom fields) + the page's full bio prose.
+    summary = _custom_fields_paragraph(
+        {"custom_fields": p.custom_fields, "field_sources": {"custom_fields": p.source}}
+    )
+    details = "\n\n".join(x for x in (summary, p.details) if x)
+    if details:
+        sp["details"] = details
     if p.urls:
         sp["urls"] = p.urls
     if p.images:

@@ -208,7 +208,8 @@ def test_scrape_performer_by_url(ctx, monkeypatch):
     assert sp["gender"] == "Female" and sp["birthdate"] == "2002-03-14"
     assert sp["country"] == "United States of America" and sp["height"] == "180"
     assert sp["image"].startswith("http") and sp["images"]
-    assert "ncaa_class" not in sp and "custom_fields" not in sp  # extras dropped
+    assert "custom_fields" not in sp  # no raw map field on a ScrapedPerformer
+    assert "Class: Senior" in sp["details"]  # NCAA metadata folded into the details summary
 
     # A non-bio URL -> empty object (Stash renders "no result").
     empty = client.post("/scrape/performer", json={"url": "https://x/about"}).json()

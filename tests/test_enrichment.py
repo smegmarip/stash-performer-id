@@ -688,7 +688,7 @@ def test_ncaa_bio_json_first_extraction():
     assert p.height == "185"  # 6-1 -> cm from heightFeet/heightInches
     assert p.weight == "68"  # 150 lbs -> kg
     assert p.birthdate == "2002-03-14"  # m/d/Y -> ISO
-    assert p.country == "United States of America"  # "Fla." AP abbreviation
+    assert p.country == "United States of America"  # NCAA/Sidearm -> US, unconditional
     assert p.details == "A standout on the sand."  # bio HTML stripped
     assert p.images == ["https://cdn/macy.jpg"]  # photo from meta, not JSON path
     assert p.custom_fields["ncaa_position"] == "Outside Hitter"
@@ -704,14 +704,18 @@ def test_ncaa_bio_html_fallback_when_no_payload():
     page = (
         '<html><head><meta name="og:image" content="https://cdn/x.jpg"></head><body>'
         "<span>Position</span><span>Setter</span><span>Hometown</span><span>Reno, Nev.</span>"
+        '<div id="sidearm-roster-player-bio">Biography 2019: Started every match. '
+        "2018: All-conference honors.</div>"
         "</body></html>"
     )
     prov = NcaaProvider.__new__(NcaaProvider)
     p = PerformerData(source="ncaa", source_entity_id="x", name="X")
     prov._apply_bio(p, page, "https://appstatesports.com/sports/wvb/roster/x/9")
     assert p.custom_fields["ncaa_position"] == "Setter"
-    assert p.country == "United States of America"  # "Nev." AP abbreviation
+    assert p.country == "United States of America"  # NCAA/Sidearm -> US, unconditional
     assert p.images == ["https://cdn/x.jpg"]
+    # Classic Sidearm bio prose (#sidearm-roster-player-bio) -> details, heading dropped.
+    assert p.details == "2019: Started every match. 2018: All-conference honors."
 
 
 def test_ncaa_maps_search_and_sorts_recent_first():
